@@ -145,9 +145,10 @@
   const gateTokenInput = document.getElementById("gateTokenInput");
   const gateLoginBtn = document.getElementById("gateLoginBtn");
   const gateErrorBox = document.getElementById("gateErrorBox");
+  const gateAppIdInput = document.getElementById("gateAppIdInput");
   const gateOAuthBtn = document.getElementById("gateOAuthBtn");
+  const gateOAuthNotice = document.getElementById("gateOAuthNotice");
   const gateGuestPreviewBtn = document.getElementById("gateGuestPreviewBtn");
-  const gateCurrentAppId = document.getElementById("gateCurrentAppId");
   const popupTokenPageBtn = document.getElementById("popupTokenPageBtn");
 
   const wsDot = document.getElementById("wsDot");
@@ -269,7 +270,9 @@
       }
     }
 
-    gateCurrentAppId.textContent = state.appId;
+    if (gateAppIdInput && state.appId && state.appId !== "1089") {
+      gateAppIdInput.value = state.appId;
+    }
     if (state.apiToken) {
       loginGateOverlay.classList.add("hidden");
     }
@@ -326,12 +329,35 @@
   }
 
   function triggerDerivOAuthLogin() {
-    const appId = (document.getElementById("appIdInput").value || state.appId || "1089").trim();
-    localStorage.setItem(STORAGE_KEYS.APP_ID, appId);
-    const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+    const enteredAppId = (
+      (gateAppIdInput && gateAppIdInput.value) ||
+      (document.getElementById("appIdInput") && document.getElementById("appIdInput").value) ||
+      state.appId ||
+      ""
+    ).trim();
+
+    // Deriv's public WebSocket test ID 1089 redirects oauth.deriv.com to deriv.com homepage.
+    // If the user hasn't entered a custom OAuth App ID yet, open the Deriv Sign-In Popup and guide them!
+    if (!enteredAppId || enteredAppId === "1089") {
+      window.open(
+        "https://app.deriv.com/account/api-token",
+        "DerivSignInPopup",
+        "width=980,height=720,menubar=no,toolbar=no,location=yes"
+      );
+      if (gateOAuthNotice) {
+        gateOAuthNotice.innerHTML =
+          "<strong>Deriv Sign-In Popup Opened!</strong> Log into your Deriv account in the popup, tick <strong>Read + Trade + Admin</strong>, copy your token, and paste it in Box #1 above (this also auto-creates your permanent OAuth App ID for this site). Or if you already created an App ID at <a href='https://api.deriv.com/dashboard' target='_blank' class='underline text-white'>api.deriv.com/dashboard</a>, enter it in the <strong>OAuth App ID</strong> box and click Continue.";
+        gateOAuthNotice.classList.remove("hidden");
+      }
+      if (gateTokenInput) gateTokenInput.focus();
+      return;
+    }
+
+    state.appId = enteredAppId;
+    localStorage.setItem(STORAGE_KEYS.APP_ID, enteredAppId);
     const oauthUrl = `https://oauth.deriv.com/oauth2/authorize?app_id=${encodeURIComponent(
-      appId
-    )}&l=EN&brand=deriv&redirect_uri=${redirectUri}`;
+      enteredAppId
+    )}&l=EN&brand=deriv`;
     window.location.href = oauthUrl;
   }
 
@@ -1679,6 +1705,42 @@
         updateConnectionHeader(true, true, state.account, state.symbol);
         syncDerivAccountData();
         subscribeLiveDerivProposals();
+
+        // If user signed in with an Admin-scoped token and appId is still 1089, auto-fetch or register OAuth App ID!
+        const scopes = msg.authorize.scopes || [];
+        if (
+          Array.isArray(scopes) &&
+          scopes.includes("admin") &&
+          (!state.appId || state.appId === "1089")
+        ) {
+          directDerivWS.send(JSON.stringify({ app_list: 1 }));
+        }
+      }
+
+      // Auto-discover or auto-register dedicated OAuth App ID for this site
+      else if (msg.msg_type === "app_list" && Array.isArray(msg.app_list)) {
+        const targetUri = window.location.origin + window.location.pathname;
+        const existing = msg.app_list.find(
+          (a) => a.redirect_uri === targetUri || a.name === "Deriv ProDesk Terminal"
+        );
+        if (existing && existing.app_id) {
+          const foundId = String(existing.app_id);
+          state.appId = foundId;
+          localStorage.setItem(STORAGE_KEYS.APP_ID, foundId);
+          if (gateAppIdInput) gateAppIdInput.value = foundId;
+          if (document.getElementById("appIdInput")) {
+            document.getElementById("appIdInput").value = foundId;
+          }
+        } else {
+          directDerivWS.send(
+            JSON.stringify({
+              app_register: "Deriv ProDesk Terminal",
+              scopes: ["read", "trade", "trading_information", "payments"],
+              redirect_uri: targetUri,
+              verification_uri: targetUri,
+            })
+          );
+        }
       }
 
       // B. Live Deriv Account Balance Stream
@@ -1863,7 +1925,7 @@
         state.appId = newAppId;
         localStorage.setItem(STORAGE_KEYS.APP_ID, newAppId);
         document.getElementById("appIdInput").value = newAppId;
-        gateCurrentAppId.textContent = newAppId;
+        if (gateAppIdInput) gateAppIdInput.value = newAppId;
         const stEl = document.getElementById("appRegisterStatus");
         stEl.textContent = `Success! Dedicated OAuth App ID ${newAppId} created and saved for ${window.location.origin}.`;
         stEl.className = "text-[11px] font-mono text-[#00c853] pt-1";
@@ -2165,7 +2227,7 @@
     state.barrier = Number(barrierInput.value || 2);
 
     localStorage.setItem(STORAGE_KEYS.APP_ID, state.appId);
-    gateCurrentAppId.textContent = state.appId;
+    if (gateAppIdInput && state.appId !== "1089") gateAppIdInput.value = state.appId;
     if (state.apiToken) {
       localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, state.apiToken);
     } else {

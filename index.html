@@ -17,49 +17,55 @@
           <span class="w-2 h-2 bg-[#00c853]"></span>
           <span class="text-white font-mono font-bold">DERIV//PRODESK — LIVE ACCOUNT BROWSER SIGN-IN</span>
         </div>
-        <span id="gateWsStatus" class="font-mono text-[10px] text-[#00c853]">WSS://WS.DERIVWS.COM READY</span>
+        <span id="gateWsStatus" class="font-mono text-[10px] text-[#00c853]">WSS://WS.DERIVWS.COM CONNECTED</span>
       </div>
 
       <div class="p-5 space-y-4">
         <p class="text-xs text-[#e6edf3] leading-relaxed">
-          Connect your <strong>Deriv Real (<code class="font-mono text-[#00c853]">CR</code>) or Demo (<code class="font-mono text-[#2979ff]">VRTC</code>) account</strong> directly in your browser. Once signed in, your live balance, actual Deriv trade history (<code class="font-mono">profit_table</code>), official 1m OHLC candles, live contract proposals, and 10-index tick streams feed directly from Deriv.
+          Sign in to your <strong>Deriv Real (<code class="font-mono text-[#00c853]">CR</code>) or Demo (<code class="font-mono text-[#2979ff]">VRTC</code>) account</strong> directly in your browser. Once signed in, your live balance, actual Deriv trade history (<code class="font-mono">profit_table</code>), official 1m OHLC candles, live contract proposals, and 10-index tick streams feed directly from Deriv.
         </p>
 
-        <!-- Primary Method: Direct Browser Token Sign-In -->
-        <div class="bg-[#090b0f] border border-[#1e2533] p-3.5 space-y-3">
+        <!-- Method 1: Instant Browser Popup Sign-In & Token Auto-OAuth -->
+        <div class="bg-[#090b0f] border border-[#00c853]/40 p-3.5 space-y-3">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-xs font-bold text-[#00c853]">SIGN IN WITH DERIV API TOKEN (REAL OR DEMO)</span>
-            <button id="popupTokenPageBtn" type="button" class="terminal-btn px-2 py-1 bg-[#2979ff]/20 hover:bg-[#2979ff]/30 text-[#2979ff] border border-[#2979ff]/40 text-[10px]">
-              Open Deriv Token Generator &nearr;
+            <span class="font-mono text-xs font-bold text-[#00c853]">1. INSTANT DERIV SIGN-IN (WORKS IMMEDIATELY)</span>
+            <button id="popupTokenPageBtn" type="button" class="terminal-btn px-2.5 py-1 bg-[#2979ff] hover:bg-[#1c64f2] text-white font-bold text-[10px]">
+              1. Open Deriv Sign-In Popup &nearr;
             </button>
           </div>
 
           <div class="text-[11px] text-[#8b949e] space-y-1">
-            <div>1. Click <strong>Open Deriv Token Generator</strong> above (or go to Deriv &rarr; Settings &rarr; API Token).</div>
-            <div>2. Select <strong>Read</strong> + <strong>Trade</strong> scopes, create a token for your Real or Demo account, and paste it below:</div>
+            <div>&bull; Click <strong>Open Deriv Sign-In Popup</strong> above and log into your Deriv account (Email, Password, or Google).</div>
+            <div>&bull; Tick <strong>Read</strong> + <strong>Trade</strong> (and <strong>Admin</strong> to auto-activate 1-click OAuth for this site), copy the token, and paste below:</div>
           </div>
 
           <div class="flex gap-2">
-            <input type="password" id="gateTokenInput" placeholder="Paste your Deriv API token here..." class="terminal-input flex-1 py-2 px-3 text-xs" />
+            <input type="password" id="gateTokenInput" placeholder="2. Paste your Deriv Token here..." class="terminal-input flex-1 py-2 px-3 text-xs" />
             <button id="gateLoginBtn" type="button" class="terminal-btn px-4 py-2 bg-[#00c853] hover:bg-[#00b248] text-[#090b0f] font-bold text-xs shrink-0">
-              SIGN IN TO DERIV
+              SIGN IN LIVE
             </button>
           </div>
           <div id="gateErrorBox" class="hidden text-[11px] font-mono text-[#ff3d57] bg-[#ff3d57]/10 border border-[#ff3d57]/30 p-2"></div>
         </div>
 
-        <!-- Secondary Method: OAuth2 Sign-In -->
+        <!-- Method 2: Deriv OAuth2 Redirect Login -->
         <div class="bg-[#090b0f] border border-[#1e2533] p-3.5 space-y-2.5">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-xs font-bold text-white">OR SIGN IN VIA DERIV OAUTH2 REDIRECT</span>
-            <span class="font-mono text-[10px] text-[#8b949e]">APP ID: <strong id="gateCurrentAppId" class="text-white">1089</strong></span>
+            <span class="font-mono text-xs font-bold text-white">2. DIRECT DERIV OAUTH2 REDIRECT LOGIN</span>
+            <a href="https://api.deriv.com/dashboard" target="_blank" rel="noopener" class="font-mono text-[10px] text-[#2979ff] hover:underline">
+              Deriv App Dashboard &nearr;
+            </a>
           </div>
           <p class="text-[11px] text-[#8b949e]">
-            Sign in with your Deriv email/password via OAuth2. <em>(Note: If using OAuth on a custom domain, click "Configure OAuth App ID" after signing in once with an Admin token.)</em>
+            Enter your registered Deriv OAuth <strong>App ID</strong> (whose Redirect URL is <code class="font-mono text-white">https://kingpee263.github.io/deriv-trading-system/</code>), or sign in once above with an <strong>Admin</strong> token and we will generate your OAuth App ID automatically:
           </p>
-          <button id="gateOAuthBtn" type="button" class="terminal-btn w-full py-2 bg-[#ff3d57] hover:bg-[#e0324a] text-white font-bold text-xs">
-            CONTINUE WITH DERIV OAUTH LOGIN
-          </button>
+          <div class="flex gap-2">
+            <input type="text" id="gateAppIdInput" placeholder="OAuth App ID (e.g. 64210)" class="terminal-input w-44 py-2 px-2.5 text-xs" />
+            <button id="gateOAuthBtn" type="button" class="terminal-btn flex-1 py-2 bg-[#ff3d57] hover:bg-[#e0324a] text-white font-bold text-xs">
+              CONTINUE WITH DERIV OAUTH LOGIN
+            </button>
+          </div>
+          <div id="gateOAuthNotice" class="hidden text-[11px] font-mono text-[#ffab00] bg-[#ffab00]/10 border border-[#ffab00]/30 p-2"></div>
         </div>
 
         <!-- Guest Market Viewer Bypass -->

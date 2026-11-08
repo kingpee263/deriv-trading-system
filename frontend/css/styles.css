@@ -1,29 +1,122 @@
-/* Custom animations and scrollbars for Deriv Quant Terminal */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+:root {
+  --bg-primary: #090b0f;
+  --bg-panel: #0f131a;
+  --bg-elevated: #151a24;
+  --border-hairline: #1e2533;
+  --border-focus: #2e384d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #586069;
+  --accent-green: #00c853;
+  --accent-green-dim: rgba(0, 200, 83, 0.12);
+  --accent-red: #ff3d57;
+  --accent-red-dim: rgba(255, 61, 87, 0.12);
+  --accent-blue: #2979ff;
+  --accent-amber: #ffab00;
 }
 
-::-webkit-scrollbar-track {
-  background: #090d16;
+* {
+  box-sizing: border-box;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+.font-mono,
+.tabular-nums {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Institutional 1px Hairline Panel Architecture */
+.terminal-panel {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-hairline);
   border-radius: 3px;
 }
 
+.terminal-header {
+  background-color: #0c0f15;
+  border-bottom: 1px solid var(--border-hairline);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.terminal-input {
+  background-color: #080a0e;
+  border: 1px solid var(--border-hairline);
+  border-radius: 2px;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  transition: border-color 0.12s ease;
+}
+
+.terminal-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.terminal-btn {
+  border-radius: 2px;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+  cursor: pointer;
+}
+
+/* Digit Matrix Cell */
+.digit-node {
+  background-color: #0b0e14;
+  border: 1px solid var(--border-hairline);
+  border-radius: 2px;
+  padding: 7px 4px;
+  position: relative;
+  transition: border-color 0.1s ease, background-color 0.1s ease;
+}
+
+.digit-node.active-tick {
+  border-color: var(--accent-green);
+  background-color: rgba(0, 200, 83, 0.08);
+}
+
+.digit-node.ml-target {
+  border-color: var(--accent-amber);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090b0f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e2533;
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-.digit-cell {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.digit-cell.active-digit {
-  transform: translateY(-2px) scale(1.03);
-  box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
-  border-color: #10b981;
+  background: #2e384d;
 }

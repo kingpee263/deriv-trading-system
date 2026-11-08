@@ -1,6 +1,34 @@
 (() => {
+  const PIP_SIZES = {
+    R_10: 3,
+    R_25: 3,
+    R_50: 4,
+    R_75: 4,
+    R_100: 2,
+    "1HZ10V": 2,
+    "1HZ25V": 2,
+    "1HZ50V": 2,
+    "1HZ75V": 2,
+    "1HZ100V": 2,
+  };
+
+  const PAYOUT_MULTIPLIERS = {
+    DIGITEVEN: 0.95,
+    DIGITODD: 0.95,
+    CALL: 0.95,
+    PUT: 0.95,
+    DIGITDIFF: 0.09,
+    DIGITMATCH: 7.9,
+  };
+
   const state = {
+    mode: "detecting", // "backend" | "direct_deriv"
     symbol: "R_100",
+    appId: "1089",
+    apiToken: "",
+    windowSize: 100,
+    barrier: 4,
+    timeframeSec: 60,
     connectedToDeriv: false,
     authorized: false,
     botEnabled: false,
@@ -9,7 +37,43 @@
     candles: [],
     digitStats: null,
     trades: [],
+    pendingPaperTrades: [],
+    account: {
+      loginid: "PAPER-SIM",
+      currency: "USD",
+      balance: 10000.0,
+      is_virtual: true,
+    },
+    strategyConfig: {
+      enabled: false,
+      strategy_type: "EVEN_ODD_STREAK",
+      symbol: "R_100",
+      contract_type: "DIGITEVEN",
+      duration_ticks: 1,
+      barrier: 4,
+      streak_threshold: 4,
+      window_size: 100,
+      paper_trading: true,
+    },
+    risk: {
+      base_stake: 1.0,
+      take_profit: 20.0,
+      stop_loss: 15.0,
+      max_consecutive_losses: 5,
+      use_martingale: false,
+      martingale_multiplier: 2.0,
+      current_stake: 1.0,
+      consecutive_losses: 0,
+      total_profit: 0.0,
+      total_trades: 0,
+      wins: 0,
+      losses: 0,
+      win_rate: 0.0,
+      halt_reason: null,
+    },
   };
+
+  let directDerivWS = null;
 
   // DOM Elements
   const connBadge = document.getElementById("connBadge");
@@ -136,7 +200,6 @@
       }
     }
 
-    // Render recent digits tape
     recentDigitsTape.innerHTML = "";
     (stats.recent_digits || []).slice(-22).forEach((d, idx, arr) => {
       const badge = document.createElement("span");
@@ -179,7 +242,7 @@
       connBadge.className =
         "text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30";
     } else {
-      connBadge.textContent = "Local Sim Stream";
+      connBadge.textContent = "Connecting Stream...";
       connBadge.className =
         "text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30";
     }
@@ -201,7 +264,7 @@
       sessionPnl.className = `text-base font-mono font-bold ${
         pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-rose-400" : "text-white"
       }`;
-      sessionWinRate.textContent = `${riskSummary.win_rate.toFixed(1)}%`;
+      sessionWinRate.textContent = `${Number(riskSummary.win_rate || 0).toFixed(1)}%`;
       sessionWL.textContent = `${riskSummary.wins} / ${riskSummary.losses}`;
       nextStakeLabel.textContent = `$${Number(riskSummary.current_stake || 1).toFixed(2)}`;
 
@@ -315,7 +378,6 @@
       });
       ctx.stroke();
 
-      // Draw latest tick point
       const last = pts[pts.length - 1];
       const lx = w - 10;
       const ly = h - 15 - ((last.quote - minQ) / range) * (h - 30);
@@ -359,10 +421,420 @@
     }
   }
 
-  // Connect to Backend WebSocket
-  function connectWS() {
+  // ============================================================================
+  // Standalone Browser Engine (Used when hosted on GitHub Pages without FastAPI)
+  // ============================================================================
+
+  function extractLastDigitClient(quote, pipSize) {
+    const formatted = Number(quote).toFixed(pipSize);
+    const lastChar = formatted.charAt(formatted.length - 1);
+    return { formatted, lastDigit: parseInt(lastChar, 10) || 0 };
+  }
+
+  function computeClientDigitStats() {
+    const win = state.windowSize;
+    const bar = state.barrier;
+    const slice = state.ticks.slice(-win);
+    const total = slice.length;
+    const counts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0 };
+
+    let evenCount = 0;
+    let oddCount = 0;
+    let overCount = 0;
+    let underCount = 0;
+
+    slice.forEach((t) => {
+      const d = t.last_digit;
+      counts[d] = (counts[d] || 0) + 1;
+      if (d % 2 === 0) evenCount++;
+      else oddCount++;
+      if (d > bar) overCount++;
+      else if (d < bar) underCount++;
+    });
+
+    const percentages = {};
+    for (let d = 0; d <= 9; d++) {
+      percentages[d] = total > 0 ? Number(((counts[d] / total) * 100).toFixed(2)) : 0;
+    }
+
+    let evenStreak = 0;
+    let oddStreak = 0;
+    for (let i = slice.length - 1; i >= 0; i--) {
+      if (slice[i].last_digit % 2 === 0) {
+        if (oddStreak > 0) break;
+        evenStreak++;
+      } else {
+        if (evenStreak > 0) break;
+        oddStreak++;
+      }
+    }
+
+    let hottest = 0;
+    let coldest = 0;
+    if (total > 0) {
+      for (let d = 1; d <= 9; d++) {
+        if (counts[d] >= counts[hottest]) hottest = d;
+        if (counts[d] < counts[coldest]) coldest = d;
+      }
+    }
+
+    return {
+      symbol: state.symbol,
+      window_size: win,
+      total_ticks: total,
+      counts,
+      percentages,
+      even_pct: total > 0 ? Number(((evenCount / total) * 100).toFixed(2)) : 0,
+      odd_pct: total > 0 ? Number(((oddCount / total) * 100).toFixed(2)) : 0,
+      over_pct: total > 0 ? Number(((overCount / total) * 100).toFixed(2)) : 0,
+      under_pct: total > 0 ? Number(((underCount / total) * 100).toFixed(2)) : 0,
+      barrier: bar,
+      current_even_streak: evenStreak,
+      current_odd_streak: oddStreak,
+      hottest_digit: hottest,
+      coldest_digit: coldest,
+      recent_digits: slice.slice(-30).map((t) => t.last_digit),
+    };
+  }
+
+  function estimateClientPayoutRatio(contractType, barrier) {
+    if (PAYOUT_MULTIPLIERS[contractType] !== undefined) {
+      return PAYOUT_MULTIPLIERS[contractType];
+    }
+    const b = barrier ?? 4;
+    if (contractType === "DIGITOVER") {
+      const winDigits = Math.max(1, 9 - b);
+      return Number((0.96 / (winDigits / 10) - 1).toFixed(2));
+    }
+    if (contractType === "DIGITUNDER") {
+      const winDigits = Math.max(1, b);
+      return Number((0.96 / (winDigits / 10) - 1).toFixed(2));
+    }
+    return 0.95;
+  }
+
+  function evaluateClientContract(contractType, entryQuote, exitQuote, exitDigit, barrier) {
+    const b = barrier ?? 4;
+    if (contractType === "DIGITEVEN") return exitDigit % 2 === 0;
+    if (contractType === "DIGITODD") return exitDigit % 2 === 1;
+    if (contractType === "DIGITOVER") return exitDigit > b;
+    if (contractType === "DIGITUNDER") return exitDigit < b;
+    if (contractType === "DIGITMATCH") return exitDigit === b;
+    if (contractType === "DIGITDIFF") return exitDigit !== b;
+    if (contractType === "CALL") return exitQuote > entryQuote;
+    if (contractType === "PUT") return exitQuote < entryQuote;
+    return false;
+  }
+
+  function openClientTrade(contractType, barrier, durationTicks, reason) {
+    const lastTick = state.ticks[state.ticks.length - 1];
+    if (!lastTick) return;
+
+    const stake = Number(state.risk.current_stake.toFixed(2));
+    const trade = {
+      id: `TRD-${Math.random().toString(16).slice(2, 8).toUpperCase()}`,
+      timestamp: Math.floor(Date.now() / 1000),
+      symbol: state.symbol,
+      strategy: state.strategyConfig.strategy_type,
+      contract_type: contractType,
+      barrier: ["DIGITOVER", "DIGITUNDER", "DIGITMATCH", "DIGITDIFF"].includes(contractType)
+        ? barrier
+        : null,
+      duration_ticks: durationTicks,
+      stake,
+      entry_quote: lastTick.quote,
+      entry_digit: lastTick.last_digit,
+      exit_quote: null,
+      exit_digit: null,
+      status: "OPEN",
+      payout: 0,
+      profit: 0,
+      is_paper: true,
+      reason,
+    };
+
+    state.trades.unshift(trade);
+    state.pendingPaperTrades.push({ trade, remaining: durationTicks });
+    renderTradesTable();
+  }
+
+  function evaluateClientStrategy(tick, stats) {
+    if (!state.strategyConfig.enabled) return;
+    if (state.pendingPaperTrades.length > 0) return;
+    if (stats.total_ticks < 15) return;
+
+    // Check risk guards first
+    if (state.risk.total_profit >= state.risk.take_profit) {
+      state.risk.halt_reason = `Take Profit reached (+$${state.risk.total_profit.toFixed(2)})`;
+      state.strategyConfig.enabled = false;
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      return;
+    }
+    if (state.risk.total_profit <= -Math.abs(state.risk.stop_loss)) {
+      state.risk.halt_reason = `Stop Loss reached (-$${Math.abs(state.risk.total_profit).toFixed(2)})`;
+      state.strategyConfig.enabled = false;
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      return;
+    }
+    if (state.risk.consecutive_losses >= state.risk.max_consecutive_losses) {
+      state.risk.halt_reason = `Max consecutive losses reached (${state.risk.consecutive_losses})`;
+      state.strategyConfig.enabled = false;
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      return;
+    }
+
+    const st = state.strategyConfig.strategy_type;
+    const threshold = state.strategyConfig.streak_threshold;
+    const dur = state.strategyConfig.duration_ticks;
+    const bar = state.strategyConfig.barrier;
+
+    if (st === "EVEN_ODD_STREAK") {
+      if (stats.current_odd_streak >= threshold) {
+        openClientTrade(
+          "DIGITEVEN",
+          null,
+          dur,
+          `Odd streak reached ${stats.current_odd_streak} ticks -> Reversal DIGITEVEN`
+        );
+      } else if (stats.current_even_streak >= threshold) {
+        openClientTrade(
+          "DIGITODD",
+          null,
+          dur,
+          `Even streak reached ${stats.current_even_streak} ticks -> Reversal DIGITODD`
+        );
+      }
+    } else if (st === "OVER_UNDER_EDGE") {
+      const tail = stats.recent_digits.slice(-threshold);
+      if (tail.length >= threshold) {
+        if (tail.every((d) => d <= bar) && stats.over_pct >= 40) {
+          openClientTrade(
+            "DIGITOVER",
+            bar,
+            dur,
+            `${threshold} ticks <= ${bar} (Over ${stats.over_pct}%) -> DIGITOVER ${bar}`
+          );
+        } else if (tail.every((d) => d >= bar) && stats.under_pct >= 40) {
+          openClientTrade(
+            "DIGITUNDER",
+            bar,
+            dur,
+            `${threshold} ticks >= ${bar} (Under ${stats.under_pct}%) -> DIGITUNDER ${bar}`
+          );
+        }
+      }
+    } else if (st === "MATCH_DIFF_COLD") {
+      const coldest = stats.coldest_digit;
+      const coldPct = stats.percentages[coldest] ?? 10;
+      if (tick.last_digit === coldest && coldPct <= 8.0) {
+        openClientTrade(
+          "DIGITDIFF",
+          coldest,
+          dur,
+          `Coldest digit ${coldest} (${coldPct}%) appeared -> DIGITDIFF ${coldest}`
+        );
+      }
+    } else if (st === "RISE_FALL_MOMENTUM") {
+      if (state.ticks.length >= threshold + 1) {
+        const win = state.ticks.slice(-(threshold + 1));
+        const diffs = [];
+        for (let i = 0; i < win.length - 1; i++) {
+          diffs.push(win[i + 1].quote - win[i].quote);
+        }
+        if (diffs.every((d) => d > 0)) {
+          openClientTrade("CALL", null, dur, `Bullish momentum (${threshold} rising ticks) -> CALL`);
+        } else if (diffs.every((d) => d < 0)) {
+          openClientTrade("PUT", null, dur, `Bearish momentum (${threshold} falling ticks) -> PUT`);
+        }
+      }
+    }
+  }
+
+  function processClientTick(quote, epoch, pipSize, isHistorical = false) {
+    const { formatted, lastDigit } = extractLastDigitClient(quote, pipSize);
+    const tick = {
+      symbol: state.symbol,
+      epoch,
+      quote: Number(quote),
+      formatted_quote: formatted,
+      pip_size: pipSize,
+      last_digit: lastDigit,
+    };
+
+    state.ticks.push(tick);
+    if (state.ticks.length > 500) state.ticks.shift();
+
+    // Update 1m candle
+    const bucket = Math.floor(epoch / state.timeframeSec) * state.timeframeSec;
+    const lastCandle = state.candles[state.candles.length - 1];
+    if (!lastCandle || lastCandle.open_time !== bucket) {
+      state.candles.push({
+        symbol: state.symbol,
+        timeframe_sec: state.timeframeSec,
+        open_time: bucket,
+        open: tick.quote,
+        high: tick.quote,
+        low: tick.quote,
+        close: tick.quote,
+        tick_count: 1,
+      });
+      if (state.candles.length > 120) state.candles.shift();
+    } else {
+      lastCandle.high = Math.max(lastCandle.high, tick.quote);
+      lastCandle.low = Math.min(lastCandle.low, tick.quote);
+      lastCandle.close = tick.quote;
+      lastCandle.tick_count++;
+    }
+
+    if (isHistorical) return;
+
+    // Settle pending paper trades
+    if (state.pendingPaperTrades.length > 0) {
+      const nextPending = [];
+      state.pendingPaperTrades.forEach((item) => {
+        item.remaining--;
+        if (item.remaining <= 0) {
+          const t = item.trade;
+          const won = evaluateClientContract(
+            t.contract_type,
+            t.entry_quote,
+            tick.quote,
+            tick.last_digit,
+            t.barrier
+          );
+          t.exit_quote = tick.quote;
+          t.exit_digit = tick.last_digit;
+          if (won) {
+            const ratio = estimateClientPayoutRatio(t.contract_type, t.barrier);
+            t.profit = Number((t.stake * ratio).toFixed(2));
+            t.payout = Number((t.stake + t.profit).toFixed(2));
+            t.status = "WON";
+            state.risk.wins++;
+            state.risk.consecutive_losses = 0;
+            state.risk.current_stake = state.risk.base_stake;
+          } else {
+            t.profit = Number((-t.stake).toFixed(2));
+            t.payout = 0;
+            t.status = "LOST";
+            state.risk.losses++;
+            state.risk.consecutive_losses++;
+            if (state.risk.use_martingale) {
+              state.risk.current_stake = Number(
+                (state.risk.current_stake * state.risk.martingale_multiplier).toFixed(2)
+              );
+            } else {
+              state.risk.current_stake = state.risk.base_stake;
+            }
+          }
+          state.risk.total_trades++;
+          state.risk.total_profit = Number((state.risk.total_profit + t.profit).toFixed(2));
+          state.risk.win_rate = Number(
+            ((state.risk.wins / state.risk.total_trades) * 100).toFixed(1)
+          );
+          if (state.account.loginid === "PAPER-SIM") {
+            state.account.balance = Number((10000 + state.risk.total_profit).toFixed(2));
+          }
+          renderTradesTable();
+        } else {
+          nextPending.push(item);
+        }
+      });
+      state.pendingPaperTrades = nextPending;
+    }
+
+    const stats = computeClientDigitStats();
+    evaluateClientStrategy(tick, stats);
+
+    updateTickBanner(tick);
+    updateDigitHeatmap(stats, tick.last_digit);
+    updateRiskAndBotUI(state.risk, state.strategyConfig);
+    updateConnectionHeader(state.connectedToDeriv, state.authorized, state.account, state.symbol);
+    drawChart();
+  }
+
+  function startDirectDerivConnection() {
+    state.mode = "direct_deriv";
+    if (directDerivWS) {
+      try {
+        directDerivWS.onclose = null;
+        directDerivWS.close();
+      } catch (_) {}
+    }
+
+    state.ticks = [];
+    state.candles = [];
+    const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${state.appId || "1089"}`;
+    directDerivWS = new WebSocket(wsUrl);
+
+    directDerivWS.onopen = () => {
+      state.connectedToDeriv = true;
+      updateConnectionHeader(true, state.authorized, state.account, state.symbol);
+
+      if (state.apiToken && state.apiToken.trim()) {
+        directDerivWS.send(JSON.stringify({ authorize: state.apiToken.trim() }));
+      }
+
+      directDerivWS.send(
+        JSON.stringify({
+          ticks_history: state.symbol,
+          adjust_start_time: 1,
+          count: 100,
+          end: "latest",
+          style: "ticks",
+          subscribe: 1,
+        })
+      );
+    };
+
+    directDerivWS.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      const pipSize = PIP_SIZES[state.symbol] || 2;
+
+      if (msg.msg_type === "authorize" && msg.authorize) {
+        state.authorized = true;
+        state.account = {
+          loginid: msg.authorize.loginid || "DERIV",
+          currency: msg.authorize.currency || "USD",
+          balance: Number(msg.authorize.balance || 0),
+          is_virtual: Boolean(msg.authorize.is_virtual),
+        };
+        updateConnectionHeader(true, true, state.account, state.symbol);
+      } else if (msg.msg_type === "history" && msg.history) {
+        const prices = msg.history.prices || [];
+        const times = msg.history.times || [];
+        const pSize = msg.pip_size !== undefined ? Number(msg.pip_size) : pipSize;
+        for (let i = 0; i < prices.length; i++) {
+          processClientTick(Number(prices[i]), Number(times[i]), pSize, i < prices.length - 1);
+        }
+      } else if (msg.msg_type === "tick" && msg.tick) {
+        const pSize = msg.tick.pip_size !== undefined ? Number(msg.tick.pip_size) : pipSize;
+        processClientTick(Number(msg.tick.quote), Number(msg.tick.epoch), pSize, false);
+      }
+    };
+
+    directDerivWS.onclose = () => {
+      state.connectedToDeriv = false;
+      updateConnectionHeader(false, false, state.account, state.symbol);
+      setTimeout(startDirectDerivConnection, 3000);
+    };
+  }
+
+  // Try connecting to local FastAPI backend first; if hosted on GitHub Pages, switch to direct Deriv WS
+  function connectSystem() {
+    const isGitHubPages = window.location.hostname.endsWith("github.io");
+    if (isGitHubPages) {
+      startDirectDerivConnection();
+      return;
+    }
+
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${window.location.host}/ws`);
+    let opened = false;
+
+    ws.onopen = () => {
+      opened = true;
+      state.mode = "backend";
+    };
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -423,14 +895,31 @@
       }
     };
 
+    ws.onerror = () => {
+      if (!opened && state.mode !== "direct_deriv") {
+        startDirectDerivConnection();
+      }
+    };
+
     ws.onclose = () => {
-      setTimeout(connectWS, 2000);
+      if (state.mode === "backend") {
+        setTimeout(connectSystem, 2000);
+      }
     };
   }
 
   // Event Listeners
   symbolSelect.addEventListener("change", async () => {
     const symbol = symbolSelect.value;
+    state.symbol = symbol;
+    state.windowSize = Number(document.getElementById("windowSizeInput").value || 100);
+    state.barrier = Number(barrierInput.value || 4);
+
+    if (state.mode === "direct_deriv") {
+      startDirectDerivConnection();
+      return;
+    }
+
     await fetch("/api/connection", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -438,8 +927,8 @@
         app_id: document.getElementById("appIdInput").value || "1089",
         api_token: document.getElementById("apiTokenInput").value || "",
         symbol,
-        window_size: Number(document.getElementById("windowSizeInput").value || 100),
-        barrier: Number(barrierInput.value || 4),
+        window_size: state.windowSize,
+        barrier: state.barrier,
         timeframe_sec: 60,
       }),
     });
@@ -447,6 +936,27 @@
 
   toggleBotBtn.addEventListener("click", async () => {
     const nextEnabled = !state.botEnabled;
+    state.barrier = Number(barrierInput.value || 4);
+    state.windowSize = Number(document.getElementById("windowSizeInput").value || 100);
+
+    if (state.mode === "direct_deriv") {
+      state.strategyConfig = {
+        enabled: nextEnabled,
+        strategy_type: strategySelect.value,
+        symbol: symbolSelect.value,
+        contract_type: "DIGITEVEN",
+        duration_ticks: Number(durationTicksInput.value || 1),
+        barrier: state.barrier,
+        streak_threshold: Number(streakThresholdInput.value || 4),
+        window_size: state.windowSize,
+        paper_trading: paperTradingToggle.checked,
+      };
+      if (nextEnabled) state.risk.halt_reason = null;
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      updateDigitHeatmap(computeClientDigitStats(), -1);
+      return;
+    }
+
     await fetch("/api/strategy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -456,9 +966,9 @@
         symbol: symbolSelect.value,
         contract_type: "DIGITEVEN",
         duration_ticks: Number(durationTicksInput.value || 1),
-        barrier: Number(barrierInput.value || 4),
+        barrier: state.barrier,
         streak_threshold: Number(streakThresholdInput.value || 4),
-        window_size: Number(document.getElementById("windowSizeInput").value || 100),
+        window_size: state.windowSize,
         paper_trading: paperTradingToggle.checked,
       }),
     });
@@ -467,19 +977,42 @@
   document.querySelectorAll(".manual-trade-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const contractType = btn.getAttribute("data-contract");
+      const dur = Number(durationTicksInput.value || 1);
+      const bar = Number(barrierInput.value || 4);
+
+      if (state.mode === "direct_deriv") {
+        openClientTrade(contractType, bar, dur, "Manual 1-Click Execution");
+        return;
+      }
+
       await fetch("/api/trade/manual", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contract_type: contractType,
-          duration_ticks: Number(durationTicksInput.value || 1),
-          barrier: Number(barrierInput.value || 4),
+          duration_ticks: dur,
+          barrier: bar,
         }),
       });
     });
   });
 
   saveRiskBtn.addEventListener("click", async () => {
+    if (state.mode === "direct_deriv") {
+      state.risk.base_stake = Number(baseStakeInput.value || 1.0);
+      state.risk.take_profit = Number(takeProfitInput.value || 20.0);
+      state.risk.stop_loss = Number(stopLossInput.value || 15.0);
+      state.risk.max_consecutive_losses = Number(maxLossStreakInput.value || 5);
+      state.risk.use_martingale = useMartingaleToggle.checked;
+      state.risk.martingale_multiplier = Number(martingaleMultInput.value || 2.0);
+      if (state.risk.consecutive_losses === 0) {
+        state.risk.current_stake = state.risk.base_stake;
+      }
+      state.risk.halt_reason = null;
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      return;
+    }
+
     await fetch("/api/risk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -496,6 +1029,25 @@
   });
 
   resetSessionBtn.addEventListener("click", async () => {
+    if (state.mode === "direct_deriv") {
+      state.risk.current_stake = state.risk.base_stake;
+      state.risk.consecutive_losses = 0;
+      state.risk.total_profit = 0;
+      state.risk.total_trades = 0;
+      state.risk.wins = 0;
+      state.risk.losses = 0;
+      state.risk.win_rate = 0;
+      state.risk.halt_reason = null;
+      state.trades = [];
+      if (state.account.loginid === "PAPER-SIM") {
+        state.account.balance = 10000;
+      }
+      updateRiskAndBotUI(state.risk, state.strategyConfig);
+      updateConnectionHeader(state.connectedToDeriv, state.authorized, state.account, state.symbol);
+      renderTradesTable();
+      return;
+    }
+
     await fetch("/api/risk/reset", { method: "POST" });
   });
 
@@ -530,15 +1082,26 @@
   document.getElementById("closeApiModalBtn").addEventListener("click", closeModal);
   document.getElementById("cancelApiModalBtn").addEventListener("click", closeModal);
   document.getElementById("saveApiModalBtn").addEventListener("click", async () => {
+    state.appId = document.getElementById("appIdInput").value || "1089";
+    state.apiToken = document.getElementById("apiTokenInput").value || "";
+    state.windowSize = Number(document.getElementById("windowSizeInput").value || 100);
+    state.barrier = Number(barrierInput.value || 4);
+
+    if (state.mode === "direct_deriv") {
+      startDirectDerivConnection();
+      closeModal();
+      return;
+    }
+
     await fetch("/api/connection", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        app_id: document.getElementById("appIdInput").value || "1089",
-        api_token: document.getElementById("apiTokenInput").value || "",
+        app_id: state.appId,
+        api_token: state.apiToken,
         symbol: symbolSelect.value,
-        window_size: Number(document.getElementById("windowSizeInput").value || 100),
-        barrier: Number(barrierInput.value || 4),
+        window_size: state.windowSize,
+        barrier: state.barrier,
         timeframe_sec: 60,
       }),
     });
@@ -548,5 +1111,5 @@
   window.addEventListener("resize", drawChart);
 
   initDigitGrid();
-  connectWS();
+  connectSystem();
 })();

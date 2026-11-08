@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DERIV PRODESK // Quantitative Execution &amp; ML Terminal</title>
+  <title>DERIV PRODESK v2 // Live Multi-Index ML Execution Terminal</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
@@ -11,9 +11,9 @@
 
   <!-- TOP INSTITUTIONAL EXECUTION BAR -->
   <header class="bg-[#0c0f15] border-b border-[#1e2533] px-3 py-2 sticky top-0 z-40">
-    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+    <div class="max-w-[1650px] mx-auto flex flex-wrap items-center justify-between gap-2">
 
-      <!-- Left: Brand + Market Feed Selector + Connection Telemetry -->
+      <!-- Left: Brand + Market Feed Selector + Live Spot Telemetry -->
       <div class="flex flex-wrap items-center gap-3">
         <div class="flex items-center gap-2 pr-3 border-r border-[#1e2533]">
           <span class="inline-block w-2 h-2 bg-[#00c853]" id="wsDot"></span>
@@ -23,7 +23,7 @@
 
         <!-- Symbol Selector -->
         <div class="flex items-center gap-1.5">
-          <span class="text-[10px] uppercase tracking-wider text-[#8b949e]">Instrument</span>
+          <span class="text-[10px] uppercase tracking-wider text-[#8b949e]">Active Feed</span>
           <select id="symbolSelect" class="terminal-input py-1 px-2 text-xs font-semibold">
             <option value="R_100">R_100 // Volatility 100</option>
             <option value="1HZ100V">1HZ100V // Vol 100 (1s)</option>
@@ -39,24 +39,28 @@
         </div>
 
         <!-- Live Spot Ticker in Top Bar -->
-        <div class="hidden md:flex items-center gap-3 pl-3 border-l border-[#1e2533] font-mono">
+        <div class="hidden xl:flex items-center gap-3 pl-3 border-l border-[#1e2533] font-mono">
           <div>
-            <span class="text-[10px] text-[#8b949e] block">SPOT QUOTE</span>
+            <span class="text-[9px] text-[#8b949e] block">LIVE DERIV SPOT</span>
             <span id="liveQuote" class="text-sm font-bold text-white tabular-nums">--</span>
           </div>
           <div>
-            <span class="text-[10px] text-[#8b949e] block">LAST DIGIT</span>
+            <span class="text-[9px] text-[#8b949e] block">DIGIT</span>
             <span id="liveLastDigit" class="text-sm font-bold text-[#00c853] tabular-nums">-</span>
           </div>
           <div>
-            <span class="text-[10px] text-[#8b949e] block">PARITY / STREAK</span>
+            <span class="text-[9px] text-[#8b949e] block">PARITY / RUN</span>
             <div class="flex items-center gap-1">
               <span id="liveParityBadge" class="text-[10px] px-1 bg-[#151a24] text-[#8b949e]">--</span>
               <span id="streakSummary" class="text-xs text-[#e6edf3] tabular-nums">--</span>
             </div>
           </div>
           <div>
-            <span class="text-[10px] text-[#8b949e] block">TICK TIME</span>
+            <span class="text-[9px] text-[#8b949e] block">EMA(8/21) &amp; RSI(7)</span>
+            <span id="microTrendBadge" class="text-xs text-[#2979ff] tabular-nums">FLAT // RSI 50</span>
+          </div>
+          <div>
+            <span class="text-[9px] text-[#8b949e] block">SERVER TIME</span>
             <span id="liveEpoch" class="text-xs text-[#8b949e] tabular-nums">--:--:--</span>
           </div>
         </div>
@@ -64,12 +68,11 @@
 
       <!-- Right: Multi-Account Switcher & Browser Deriv Login -->
       <div class="flex flex-wrap items-center gap-2">
-        <!-- Account Switcher Dropdown (Populated when logged in via OAuth or Token) -->
         <div class="flex items-center bg-[#080a0e] border border-[#1e2533] px-2.5 py-1 gap-2.5">
           <div>
-            <span class="text-[9px] uppercase tracking-wider text-[#8b949e] block">Active Account</span>
+            <span class="text-[9px] uppercase tracking-wider text-[#8b949e] block">Execution Account</span>
             <div class="flex items-center gap-1.5">
-              <span id="accountTypeTag" class="text-[9px] font-mono font-bold px-1 py-0.2 bg-[#ffab00]/15 text-[#ffab00] border border-[#ffab00]/30">SIM</span>
+              <span id="accountTypeTag" class="text-[9px] font-mono font-bold px-1 py-0.2 bg-[#ffab00]/15 text-[#ffab00] border border-[#ffab00]/30">UNAUTH</span>
               <select id="accountSwitcherSelect" class="bg-transparent font-mono text-xs font-semibold text-white focus:outline-none cursor-pointer">
                 <option value="PAPER-SIM">PAPER-SIM ($10,000)</option>
               </select>
@@ -78,30 +81,67 @@
           </div>
           <div class="h-6 w-px bg-[#1e2533]"></div>
           <div class="text-right">
-            <span class="text-[9px] uppercase tracking-wider text-[#8b949e] block">Equity</span>
+            <span class="text-[9px] uppercase tracking-wider text-[#8b949e] block">Live Balance</span>
             <span id="accountBalance" class="font-mono text-sm font-bold text-white tabular-nums">$10,000.00</span>
           </div>
         </div>
 
-        <!-- Direct Deriv OAuth Login Button -->
-        <button id="derivOAuthBtn" class="terminal-btn bg-[#ff3d57] hover:bg-[#e0324a] text-white px-3 py-2 flex items-center gap-1.5">
-          <span>Log in with Deriv</span>
+        <button id="openApiModalBtn" class="terminal-btn bg-[#00c853] hover:bg-[#00b248] text-[#090b0f] font-bold px-3 py-2 flex items-center gap-1.5">
+          <span id="connectAccountBtnLabel">Connect Deriv Account</span>
         </button>
 
-        <!-- Token / App ID Setup Button -->
-        <button id="openApiModalBtn" class="terminal-btn bg-[#151a24] hover:bg-[#1e2533] text-[#e6edf3] border border-[#1e2533] px-2.5 py-2">
-          API Key / Account
+        <button id="derivOAuthBtn" class="terminal-btn bg-[#151a24] hover:bg-[#1e2533] text-white border border-[#2e384d] px-2.5 py-2">
+          OAuth Login
         </button>
 
         <button id="logoutDerivBtn" class="hidden terminal-btn bg-[#151a24] hover:bg-[#ff3d57]/20 text-[#ff3d57] border border-[#ff3d57]/30 px-2 py-2">
-          Disconnect
+          Logout
         </button>
       </div>
     </div>
   </header>
 
+  <!-- QUICK LIVE DERIV ACCOUNT BAR (SHOWN UNTIL USER CONNECTS LIVE/DEMO TOKEN) -->
+  <div id="liveOnboardingBar" class="bg-[#101622] border-b border-[#2979ff]/30 px-3 py-1.5">
+    <div class="max-w-[1650px] mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[10px] px-1.5 py-0.5 bg-[#2979ff]/20 text-[#2979ff] border border-[#2979ff]/40 font-bold">LIVE DERIV MODE</span>
+        <span class="text-[#e6edf3]">
+          Streaming <strong>100% Real-Time Deriv WebSocket Market Data</strong>. Paste your Deriv API Token (<code class="text-[#00c853]">Read</code> + <code class="text-[#00c853]">Trade</code> scopes) to execute directly on your Real (<code class="font-mono">CR</code>) or Demo (<code class="font-mono">VRTC</code>) account:
+        </span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <input type="password" id="quickTokenInput" placeholder="Paste Deriv API Token (Read + Trade)..." class="terminal-input py-1 px-2.5 w-64 text-xs" />
+        <button id="quickConnectBtn" class="terminal-btn bg-[#2979ff] hover:bg-[#1c64f2] text-white px-3 py-1">
+          Authorize Live Account
+        </button>
+        <a href="https://app.deriv.com/account/api-token" target="_blank" rel="noopener" class="font-mono text-[10px] text-[#8b949e] hover:text-white underline ml-1">
+          Get Token &nearr;
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 10-INDEX PARALLEL REAL-TIME MARKET SCANNER RIBBON -->
+  <div class="bg-[#0b0e14] border-b border-[#1e2533] px-3 py-1.5">
+    <div class="max-w-[1650px] mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[10px] uppercase tracking-wider text-[#8b949e] font-bold">
+          10-INDEX PARALLEL SCANNER:
+        </span>
+        <label class="inline-flex items-center gap-1 text-[10px] font-mono text-[#00c853] cursor-pointer">
+          <input type="checkbox" id="autoSwitchMarketToggle" class="accent-[#00c853]" />
+          <span>AUTO-SWITCH TO HIGHEST ML EDGE MARKET</span>
+        </label>
+      </div>
+      <div id="multiMarketScannerGrid" class="flex items-center gap-1.5 overflow-x-auto py-0.5 font-mono text-[10px]">
+        <!-- Populated live by 10-index scanner in app.js -->
+      </div>
+    </div>
+  </div>
+
   <!-- WORKSTATION MAIN 12-COLUMN GRID -->
-  <main class="max-w-[1600px] w-full mx-auto p-2.5 grid grid-cols-1 lg:grid-cols-12 gap-2.5 flex-1">
+  <main class="max-w-[1650px] w-full mx-auto p-2.5 grid grid-cols-1 lg:grid-cols-12 gap-2.5 flex-1">
 
     <!-- LEFT 8 COLUMNS: ML TELEMETRY, DIGIT MATRIX, PRICE/CANDLE CHART, ORDER BLOTTER -->
     <div class="lg:col-span-8 flex flex-col gap-2.5">
@@ -111,11 +151,16 @@
         <div class="terminal-header">
           <div class="flex items-center gap-2">
             <span class="w-1.5 h-1.5 bg-[#2979ff]"></span>
-            <span>ONLINE ML QUANT ENGINE // MARKOV TRANSITION + SHANNON ENTROPY REGIME FILTER</span>
+            <span>ONLINE ML QUANT ENGINE // MARKOV 10x10 + CHI-SQUARE + SHADOW FILTER + EV GATE</span>
           </div>
-          <span id="mlRegimeBadge" class="font-mono text-[10px] px-1.5 py-0.5 bg-[#151a24] border border-[#1e2533] text-[#8b949e]">
-            CALIBRATING STREAM...
-          </span>
+          <div class="flex items-center gap-2">
+            <span id="shadowStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 bg-[#151a24] border border-[#1e2533] text-[#ffab00]">
+              SHADOW FILTER: 0/1
+            </span>
+            <span id="mlRegimeBadge" class="font-mono text-[10px] px-1.5 py-0.5 bg-[#151a24] border border-[#1e2533] text-[#8b949e]">
+              CALIBRATING STREAM...
+            </span>
+          </div>
         </div>
 
         <div class="p-2.5 grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono">
@@ -140,7 +185,7 @@
           </div>
 
           <div class="bg-[#0b0e14] border border-[#1e2533] p-2">
-            <span class="text-[10px] text-[#8b949e] block">OPTIMAL SIGNAL</span>
+            <span class="text-[10px] text-[#8b949e] block">OPTIMAL SIGNAL &amp; EV</span>
             <div id="mlOptimalContract" class="text-xs font-bold text-[#ffab00] mt-1 truncate">SCANNING...</div>
             <span id="mlOptimalReason" class="text-[10px] text-[#8b949e] block mt-1 truncate">Gathering tick states</span>
           </div>
@@ -160,7 +205,7 @@
           <div class="bg-[#0b0e14] border border-[#1e2533] p-2">
             <span class="text-[10px] text-[#8b949e] block">OVER / UNDER (<span id="barrierLabelMetric">4</span>)</span>
             <div class="flex justify-between text-xs font-bold mt-1 tabular-nums">
-              <span id="overPctLabel" class="text-[#00c853]">> 50%</span>
+              <span id="overPctLabel" class="text-[#00c853]">&gt; 50%</span>
               <span id="underPctLabel" class="text-[#ff3d57]">&lt; 40%</span>
             </div>
             <div class="w-full h-1.5 bg-[#151a24] flex mt-1.5">
@@ -201,13 +246,13 @@
       <!-- ROW 3: REAL-TIME MICROSTRUCTURE TICK & OHLC CHART -->
       <section class="terminal-panel">
         <div class="terminal-header">
-          <span>PRICE MICROSTRUCTURE &amp; VOLATILITY STREAM</span>
+          <span>REAL-TIME DERIV MICROSTRUCTURE &amp; EMA(8/21) STREAM</span>
           <div class="flex items-center gap-1">
             <button id="chartModeTicks" class="terminal-btn px-2 py-0.5 bg-[#2979ff]/20 text-[#2979ff] border border-[#2979ff]/40">
-              TICK CURVE
+              TICK + EMA CURVE
             </button>
             <button id="chartModeCandles" class="terminal-btn px-2 py-0.5 bg-[#151a24] text-[#8b949e] border border-[#1e2533]">
-              1M OHLC
+              1M OHLC CANDLES
             </button>
           </div>
         </div>
@@ -219,28 +264,28 @@
       <!-- ROW 4: EXECUTION BLOTTER / AUDIT LOG -->
       <section class="terminal-panel flex-1">
         <div class="terminal-header">
-          <span>EXECUTION BLOTTER &amp; CONTRACT SETTLEMENT LOG</span>
+          <span>LIVE DERIV CONTRACT BLOTTER &amp; SETTLEMENT AUDIT</span>
           <button id="resetSessionBtn" class="terminal-btn text-[10px] px-2 py-0.5 bg-[#151a24] hover:bg-[#ff3d57]/20 text-[#8b949e] hover:text-[#ff3d57] border border-[#1e2533]">
-            CLEAR / RESET SESSION
+            CLEAR / RESET SESSION STATS
           </button>
         </div>
         <div class="overflow-x-auto max-h-64">
           <table class="w-full text-left border-collapse font-mono text-[11px]">
             <thead>
               <tr class="border-b border-[#1e2533] bg-[#0b0e14] text-[#8b949e]">
-                <th class="py-1.5 px-2.5">REF ID</th>
-                <th class="py-1.5 px-2">CONTRACT</th>
+                <th class="py-1.5 px-2.5">CONTRACT ID</th>
+                <th class="py-1.5 px-2">MARKET / TYPE</th>
                 <th class="py-1.5 px-2">ENTRY &rarr; EXIT</th>
                 <th class="py-1.5 px-2">STAKE</th>
-                <th class="py-1.5 px-2">STATE</th>
+                <th class="py-1.5 px-2">STATUS</th>
                 <th class="py-1.5 px-2">NET PNL</th>
-                <th class="py-1.5 px-2.5">EXECUTION TRIGGER</th>
+                <th class="py-1.5 px-2.5">QUANT TRIGGER / RECOVERY</th>
               </tr>
             </thead>
             <tbody id="tradeHistoryBody" class="divide-y divide-[#1e2533]/60 tabular-nums">
               <tr>
                 <td colspan="7" class="py-6 text-center text-[#586069] font-sans">
-                  No contracts executed in current session. Engage ML Auto-Bot or execute via Manual Order Ticket.
+                  No contracts executed in current session. Authorize your Deriv account or engage the ML Auto-Bot.
                 </td>
               </tr>
             </tbody>
@@ -283,15 +328,15 @@
         </div>
       </section>
 
-      <!-- SMALL-ACCOUNT GROWTH PRESETS ($5 / $10 / $25 / $50) -->
+      <!-- SMALL-ACCOUNT GROWTH PRESETS ($10 / $25 / $50 / $100) -->
       <section class="terminal-panel">
         <div class="terminal-header">
-          <span>SMALL-ACCOUNT GROWTH PRESETS (COMPOUNDING)</span>
-          <span class="font-mono text-[10px] text-[#00c853]">LOW-DRAWDOWN</span>
+          <span>SMALL-ACCOUNT "HIT &amp; RUN" COMPOUNDING PRESETS</span>
+          <span class="font-mono text-[10px] text-[#00c853]">12% SESSION TARGET</span>
         </div>
         <div class="p-2.5 space-y-2">
           <p class="text-[11px] text-[#8b949e]">
-            Auto-calibrates stake ($0.35 min), Take-Profit (15%–20% target), Stop-Loss guard, and Soft Split Recovery for small accounts:
+            Calibrates $0.35 min stake, 12% Hit-and-Run Take-Profit, Virtual Loss Filter (1), and Cross-Contract Smart Recovery:
           </p>
           <div class="grid grid-cols-4 gap-1.5 font-mono">
             <button data-preset="10" class="account-preset-btn terminal-btn py-1.5 bg-[#151a24] hover:bg-[#2979ff]/20 border border-[#1e2533] hover:border-[#2979ff] text-white">
@@ -314,22 +359,22 @@
       <section class="terminal-panel">
         <div class="terminal-header">
           <span>AUTOMATED QUANT EXECUTION ENGINE</span>
-          <label class="inline-flex items-center gap-1.5 text-[10px] font-mono text-[#e6edf3] cursor-pointer">
-            <input type="checkbox" id="paperTradingToggle" class="accent-[#00c853]" />
-            <span>FORCE SIM MODE</span>
+          <label class="inline-flex items-center gap-1.5 text-[10px] font-mono text-[#8b949e] cursor-pointer">
+            <input type="checkbox" id="paperTradingToggle" class="accent-[#ffab00]" />
+            <span>PAPER SIM OVERRIDE</span>
           </label>
         </div>
 
         <div class="p-2.5 space-y-2.5">
           <div>
-            <label class="block text-[10px] uppercase tracking-wider text-[#8b949e] mb-1">Execution Strategy</label>
+            <label class="block text-[10px] uppercase tracking-wider text-[#8b949e] mb-1">Quant Strategy Mode</label>
             <select id="strategySelect" class="terminal-input w-full">
-              <option value="ML_ADAPTIVE_EDGE">ML Adaptive Ensemble (Markov + Entropy Filter) [RECOMMENDED]</option>
-              <option value="SMALL_ACCT_SURVIVAL">Small-Account High-Prob Compounder (Over 1 / Under 8 / Diff)</option>
+              <option value="ML_ADAPTIVE_EDGE">ML Adaptive Ensemble (Over 2 / Under 7 + Cross-Recovery) [BEST]</option>
+              <option value="SMALL_ACCT_SURVIVAL">Small-Account High-Prob Compounder (Over 1 / Under 8 + Shadow)</option>
+              <option value="RISE_FALL_CONFLUENCE">EMA(8/21) + RSI(7) + Velocity Confluence (CALL / PUT 5t)</option>
               <option value="EVEN_ODD_STREAK">Parity Streak Mean-Reversion (DIGITEVEN / DIGITODD)</option>
               <option value="OVER_UNDER_EDGE">Barrier Compression Breakout (DIGITOVER / DIGITUNDER)</option>
-              <option value="MATCH_DIFF_COLD">Coldest-Digit Statistical Differs (DIGITDIFF)</option>
-              <option value="RISE_FALL_MOMENTUM">Micro-Trend Tick Momentum (CALL / PUT)</option>
+              <option value="MATCH_DIFF_COLD">Coldest-Digit Markov Differs (DIGITDIFF)</option>
             </select>
           </div>
 
@@ -339,17 +384,21 @@
               <input type="number" id="mlThresholdInput" value="68" min="50" max="95" class="terminal-input w-full" />
             </div>
             <div>
-              <label class="block text-[10px] text-[#8b949e] mb-1">Streak N</label>
-              <input type="number" id="streakThresholdInput" value="4" min="2" max="15" class="terminal-input w-full" />
+              <label class="block text-[10px] text-[#8b949e] mb-1">Shadow Loss</label>
+              <input type="number" id="virtualLossInput" value="1" min="0" max="4" title="Virtual losses absorbed by Shadow Bot before real money entry" class="terminal-input w-full" />
             </div>
             <div>
               <label class="block text-[10px] text-[#8b949e] mb-1">Barrier</label>
-              <input type="number" id="barrierInput" value="4" min="0" max="9" class="terminal-input w-full" />
+              <input type="number" id="barrierInput" value="2" min="0" max="9" class="terminal-input w-full" />
             </div>
             <div>
               <label class="block text-[10px] text-[#8b949e] mb-1">Ticks</label>
               <input type="number" id="durationTicksInput" value="1" min="1" max="10" class="terminal-input w-full" />
             </div>
+          </div>
+
+          <div class="hidden">
+            <input type="number" id="streakThresholdInput" value="4" />
           </div>
 
           <button id="toggleBotBtn" class="terminal-btn w-full py-2.5 bg-[#00c853] hover:bg-[#00b248] text-[#090b0f] font-bold text-xs">
@@ -361,15 +410,15 @@
       <!-- DIRECT 1-CLICK ORDER TICKET -->
       <section class="terminal-panel">
         <div class="terminal-header">
-          <span>DIRECT 1-CLICK ORDER TICKET</span>
-          <span class="font-mono text-[10px] text-[#8b949e]">INSTANT FILL</span>
+          <span>DIRECT 1-CLICK LIVE ORDER TICKET</span>
+          <span id="orderTicketModeLabel" class="font-mono text-[10px] text-[#00c853]">INSTANT DERIV FILL</span>
         </div>
         <div class="p-2.5 grid grid-cols-2 gap-1.5 font-mono">
           <button data-contract="DIGITEVEN" class="manual-trade-btn terminal-btn py-2 bg-[#151a24] hover:bg-[#2979ff]/20 border border-[#1e2533] hover:border-[#2979ff] text-[#2979ff]">
-            BUY EVEN
+            BUY EVEN (~95%)
           </button>
           <button data-contract="DIGITODD" class="manual-trade-btn terminal-btn py-2 bg-[#151a24] hover:bg-[#ffab00]/20 border border-[#1e2533] hover:border-[#ffab00] text-[#ffab00]">
-            BUY ODD
+            BUY ODD (~95%)
           </button>
           <button data-contract="DIGITOVER" class="manual-trade-btn terminal-btn py-2 bg-[#151a24] hover:bg-[#00c853]/20 border border-[#1e2533] hover:border-[#00c853] text-[#00c853]">
             DIGIT OVER
@@ -392,10 +441,10 @@
         </div>
       </section>
 
-      <!-- RISK, COMPOUNDING & RECOVERY ARCHITECTURE -->
+      <!-- RISK, CROSS-CONTRACT RECOVERY & CAPITAL PRESERVATION -->
       <section class="terminal-panel">
         <div class="terminal-header">
-          <span>RISK &amp; CAPITAL PRESERVATION</span>
+          <span>RISK &amp; SMART CROSS-CONTRACT RECOVERY</span>
           <span class="font-mono text-[10px] text-[#e6edf3]">NEXT STAKE: <strong id="nextStakeLabel" class="text-[#00c853]">$0.35</strong></span>
         </div>
 
@@ -410,21 +459,28 @@
               <input type="number" id="maxLossStreakInput" value="4" min="1" max="15" class="terminal-input w-full" />
             </div>
             <div>
-              <label class="block text-[10px] text-[#8b949e] mb-1">Target Take Profit ($)</label>
-              <input type="number" id="takeProfitInput" value="3.00" step="0.5" min="0.5" class="terminal-input w-full" />
+              <label class="block text-[10px] text-[#8b949e] mb-1">Session Take Profit ($)</label>
+              <input type="number" id="takeProfitInput" value="1.50" step="0.25" min="0.35" class="terminal-input w-full" />
             </div>
             <div>
               <label class="block text-[10px] text-[#8b949e] mb-1">Hard Stop Loss ($)</label>
-              <input type="number" id="stopLossInput" value="2.50" step="0.5" min="0.5" class="terminal-input w-full" />
+              <input type="number" id="stopLossInput" value="2.00" step="0.25" min="0.35" class="terminal-input w-full" />
             </div>
           </div>
 
           <div class="flex items-center justify-between pt-1 border-t border-[#1e2533]">
             <label class="inline-flex items-center gap-1.5 text-[11px] text-[#e6edf3] cursor-pointer">
-              <input type="checkbox" id="useMartingaleToggle" checked class="accent-[#2979ff]" />
-              <span>Smart Recovery Multiplier</span>
+              <input type="checkbox" id="crossContractRecoveryToggle" checked class="accent-[#00c853]" />
+              <span>Cross-Contract Recovery (Switch to OVER 4 / UNDER 5 ~140%)</span>
             </label>
-            <input type="number" id="martingaleMultInput" value="1.65" step="0.05" min="1.1" max="4.0" class="terminal-input w-16 text-right" />
+          </div>
+
+          <div class="flex items-center justify-between">
+            <label class="inline-flex items-center gap-1.5 text-[11px] text-[#e6edf3] cursor-pointer">
+              <input type="checkbox" id="useMartingaleToggle" checked class="accent-[#2979ff]" />
+              <span>Fallback Stake Multiplier</span>
+            </label>
+            <input type="number" id="martingaleMultInput" value="1.45" step="0.05" min="1.1" max="4.0" class="terminal-input w-16 text-right" />
           </div>
 
           <div class="flex items-center justify-between">
@@ -435,7 +491,7 @@
           </div>
 
           <button id="saveRiskBtn" class="terminal-btn w-full py-2 bg-[#151a24] hover:bg-[#1e2533] text-[#e6edf3] border border-[#1e2533]">
-            COMMIT RISK PARAMETERS
+            COMMIT RISK &amp; RECOVERY PARAMETERS
           </button>
         </div>
       </section>
@@ -446,39 +502,27 @@
   <div id="apiModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4">
     <div class="terminal-panel max-w-md w-full bg-[#0f131a] border border-[#2e384d]">
       <div class="terminal-header">
-        <span>DERIV BROWSER AUTHENTICATION // MULTI-USER LOGIN</span>
+        <span>CONNECT YOUR LIVE OR DEMO DERIV ACCOUNT</span>
         <button id="closeApiModalBtn" class="text-[#8b949e] hover:text-white font-mono text-sm">&times;</button>
       </div>
 
       <div class="p-4 space-y-4">
-        <!-- Method 1: OAuth 1-Click Browser Login -->
-        <div class="bg-[#0b0e14] border border-[#1e2533] p-3 space-y-2">
+        <!-- Method 1: Instant API Token Login (Works Immediately for Any User) -->
+        <div class="bg-[#0b0e14] border border-[#00c853]/40 p-3 space-y-2.5">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-xs font-bold text-white">1. DIRECT DERIV OAUTH LOGIN</span>
-            <span class="text-[10px] font-mono px-1.5 py-0.5 bg-[#00c853]/15 text-[#00c853]">OAUTH2</span>
-          </div>
-          <p class="text-[11px] text-[#8b949e]">
-            Sign in with your Deriv email/password on Deriv's official page. Redirects back with your Real &amp; Demo accounts ready to trade in the browser.
-          </p>
-          <button id="modalOAuthLoginBtn" class="terminal-btn w-full py-2 bg-[#ff3d57] hover:bg-[#e0324a] text-white">
-            REDIRECT TO DERIV LOGIN
-          </button>
-        </div>
-
-        <!-- Method 2: Direct API Token Login (Instant in Browser) -->
-        <div class="bg-[#0b0e14] border border-[#1e2533] p-3 space-y-2.5">
-          <div class="flex items-center justify-between">
-            <span class="font-mono text-xs font-bold text-white">2. INSTANT API TOKEN LOGIN</span>
+            <span class="font-mono text-xs font-bold text-[#00c853]">1. INSTANT LIVE / DEMO API TOKEN (RECOMMENDED)</span>
             <a href="https://app.deriv.com/account/api-token" target="_blank" rel="noopener" class="text-[10px] font-mono text-[#2979ff] hover:underline">
-              Get Token on Deriv &nearr;
+              Open Deriv Token Page &nearr;
             </a>
           </div>
-          <p class="text-[11px] text-[#8b949e]">
-            Create a token with <strong>Read + Trade</strong> scopes on Deriv and paste it below. Stored locally in your browser only.
-          </p>
+          <ol class="text-[11px] text-[#8b949e] list-decimal list-inside space-y-1">
+            <li>Log into your Deriv account (Real or Demo) at <a href="https://app.deriv.com/account/api-token" target="_blank" class="text-[#2979ff] underline">app.deriv.com/account/api-token</a>.</li>
+            <li>Check <strong>Read</strong> and <strong>Trade</strong> scopes, create a token, and paste it below.</li>
+            <li>Your token is stored <strong>only in your own browser</strong> and connects directly to Deriv's live server.</li>
+          </ol>
           <div>
-            <label class="block text-[10px] text-[#8b949e] mb-1">Deriv API Token (Demo or Real)</label>
-            <input type="password" id="apiTokenInput" placeholder="Paste Deriv API token..." class="terminal-input w-full" />
+            <label class="block text-[10px] text-[#8b949e] mb-1">Deriv API Token (Real CR or Demo VRTC)</label>
+            <input type="password" id="apiTokenInput" placeholder="Paste Deriv API token here..." class="terminal-input w-full" />
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
@@ -492,12 +536,26 @@
           </div>
         </div>
 
+        <!-- Method 2: OAuth 1-Click Browser Login -->
+        <div class="bg-[#0b0e14] border border-[#1e2533] p-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-xs font-bold text-white">2. DERIV OAUTH2 REDIRECT LOGIN</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.5 bg-[#2979ff]/15 text-[#2979ff]">OAUTH2</span>
+          </div>
+          <p class="text-[11px] text-[#8b949e]">
+            Redirects to Deriv's official sign-in page and imports all your Real (<code class="font-mono">CR</code>) &amp; Demo (<code class="font-mono">VRTC</code>) accounts into the top switcher.
+          </p>
+          <button id="modalOAuthLoginBtn" class="terminal-btn w-full py-2 bg-[#151a24] hover:bg-[#1e2533] text-white border border-[#2e384d]">
+            SIGN IN VIA DERIV OAUTH2
+          </button>
+        </div>
+
         <div class="flex justify-end gap-2 pt-1">
           <button id="cancelApiModalBtn" class="terminal-btn px-3 py-1.5 bg-[#151a24] text-[#8b949e] border border-[#1e2533]">
             CLOSE
           </button>
           <button id="saveApiModalBtn" class="terminal-btn px-4 py-1.5 bg-[#00c853] text-[#090b0f] font-bold">
-            AUTHORIZE &amp; CONNECT
+            AUTHORIZE LIVE ACCOUNT
           </button>
         </div>
       </div>

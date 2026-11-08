@@ -1,0 +1,29 @@
+/* Custom animations and scrollbars for Deriv Quant Terminal */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+.digit-cell {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.digit-cell.active-digit {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
+  border-color: #10b981;
+}

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deriv Quant Terminal — Digits & Options Trading System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-emerald-500/30">
+
+  <!-- Top Header Bar -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-rose-500 to-amber-500 flex items-center justify-center font-bold text-white shadow-lg shadow-rose-500/20">
+          D
+        </div>
+        <div>
+          <h1 class="text-base font-bold tracking-tight flex items-center gap-2">
+            Deriv Quant Terminal
+            <span id="connBadge" class="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Connecting...
+            </span>
+          </h1>
+          <p class="text-xs text-slate-400">Real-Time Tick Aggregator, Last-Digit Matrix &amp; Automated Options Engine</p>
+        </div>
+      </div>
+
+      <!-- Market & Account Status Bar -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5">
+          <label for="symbolSelect" class="text-xs text-slate-400">Index:</label>
+          <select id="symbolSelect" class="bg-transparent text-sm font-semibold text-white focus:outline-none">
+            <option value="R_100">Volatility 100 Index (R_100)</option>
+            <option value="1HZ100V">Volatility 100 (1s) Index</option>
+            <option value="R_75">Volatility 75 Index (R_75)</option>
+            <option value="R_50">Volatility 50 Index (R_50)</option>
+            <option value="R_25">Volatility 25 Index (R_25)</option>
+            <option value="R_10">Volatility 10 Index (R_10)</option>
+            <option value="1HZ10V">Volatility 10 (1s) Index</option>
+          </select>
+        </div>
+
+        <div class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 flex items-center gap-3">
+          <div>
+            <span class="text-[11px] text-slate-400 block">Account</span>
+            <span id="accountLoginId" class="text-xs font-mono font-semibold text-emerald-400">PAPER-SIM</span>
+          </div>
+          <div class="h-6 w-px bg-slate-800"></div>
+          <div>
+            <span class="text-[11px] text-slate-400 block">Balance</span>
+            <span id="accountBalance" class="text-sm font-mono font-bold text-white">$10,000.00</span>
+          </div>
+        </div>
+
+        <button id="openApiModalBtn" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg transition">
+          API Settings
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main class="max-w-7xl mx-auto px-4 py-5 grid grid-cols-1 lg:grid-cols-12 gap-5">
+
+    <!-- Left 8 Columns: Live Price, Digit Heatmap, Candle Chart & Trade History -->
+    <div class="lg:col-span-8 space-y-5">
+
+      <!-- Live Quote Banner & Quick Metrics -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+          <span class="text-xs text-slate-400">Live Tick Quote</span>
+          <div id="liveQuote" class="text-2xl font-mono font-bold text-white mt-1">--</div>
+          <span id="liveEpoch" class="text-[11px] text-slate-500 font-mono">Waiting for stream...</span>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+          <span class="text-xs text-slate-400">Current Last Digit</span>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span id="liveLastDigit" class="text-3xl font-mono font-extrabold text-emerald-400">-</span>
+            <span id="liveParityBadge" class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">--</span>
+          </div>
+          <span id="streakSummary" class="text-[11px] text-slate-400 mt-1 block">Streak: --</span>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+          <span class="text-xs text-slate-400">Even vs. Odd (%)</span>
+          <div class="flex justify-between text-xs font-mono font-semibold mt-1.5">
+            <span id="evenPctLabel" class="text-sky-400">E: 50%</span>
+            <span id="oddPctLabel" class="text-purple-400">O: 50%</span>
+          </div>
+          <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden flex mt-1.5">
+            <div id="evenBar" class="bg-sky-500 h-full transition-all duration-300" style="width: 50%"></div>
+            <div id="oddBar" class="bg-purple-500 h-full transition-all duration-300" style="width: 50%"></div>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+          <span class="text-xs text-slate-400">Over vs. Under (<span id="barrierLabelMetric">4</span>)</span>
+          <div class="flex justify-between text-xs font-mono font-semibold mt-1.5">
+            <span id="overPctLabel" class="text-emerald-400">Over: 50%</span>
+            <span id="underPctLabel" class="text-rose-400">Under: 40%</span>
+          </div>
+          <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden flex mt-1.5">
+            <div id="overBar" class="bg-emerald-500 h-full transition-all duration-300" style="width: 50%"></div>
+            <div id="underBar" class="bg-rose-500 h-full transition-all duration-300" style="width: 50%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Last-Digit Distribution Matrix (0 - 9) -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div>
+            <h2 class="text-sm font-bold text-white flex items-center gap-2">
+              Last-Digit Distribution Heatmap (0–9)
+              <span class="text-xs font-normal text-slate-400" id="windowCountBadge">(Window: 100 ticks)</span>
+            </h2>
+          </div>
+          <div class="flex items-center gap-3 text-xs">
+            <span class="flex items-center gap-1 text-emerald-400">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hottest: <strong id="hottestDigitLabel">-</strong>
+            </span>
+            <span class="flex items-center gap-1 text-sky-400">
+              <span class="w-2 h-2 rounded-full bg-sky-400"></span> Coldest: <strong id="coldestDigitLabel">-</strong>
+            </span>
+          </div>
+        </div>
+
+        <div id="digitGrid" class="grid grid-cols-5 sm:grid-cols-10 gap-2">
+          <!-- Populated dynamically by app.js -->
+        </div>
+
+        <!-- Recent 25 Digits Stream Tape -->
+        <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2 overflow-x-auto">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400 shrink-0">Recent Digits:</span>
+          <div id="recentDigitsTape" class="flex items-center gap-1.5"></div>
+        </div>
+      </section>
+
+      <!-- Live Tick & OHLC Candle Chart Canvas -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-sm font-bold text-white">Real-Time Tick &amp; OHLC Candle Stream</h2>
+            <p class="text-xs text-slate-400">Live tick trajectory and 1-minute candle aggregation</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="chartModeTicks" class="text-xs px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-medium">
+              Tick Curve
+            </button>
+            <button id="chartModeCandles" class="text-xs px-2.5 py-1 rounded bg-slate-800 text-slate-400 hover:text-white">
+              OHLC Candles
+            </button>
+          </div>
+        </div>
+        <div class="relative h-56 w-full bg-slate-950/70 rounded-lg border border-slate-800/80 p-2">
+          <canvas id="marketCanvas" class="w-full h-full"></canvas>
+        </div>
+      </section>
+
+      <!-- Trade Execution History Table -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-white">Execution Log &amp; Contract Outcomes</h2>
+          <button id="resetSessionBtn" class="text-xs text-slate-400 hover:text-rose-400 transition">
+            Reset Session Stats
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-slate-800 text-slate-400">
+                <th class="py-2 px-2">ID</th>
+                <th class="py-2 px-2">Contract</th>
+                <th class="py-2 px-2">Entry / Exit Digit</th>
+                <th class="py-2 px-2">Stake</th>
+                <th class="py-2 px-2">Status</th>
+                <th class="py-2 px-2">Profit</th>
+                <th class="py-2 px-2">Signal Reason</th>
+              </tr>
+            </thead>
+            <tbody id="tradeHistoryBody" class="divide-y divide-slate-800/60 font-mono">
+              <tr>
+                <td colspan="7" class="py-6 text-center text-slate-500 font-sans">
+                  No trades executed yet. Start the automated bot or fire a manual 1-click contract.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right 4 Columns: Automated Strategy Bot, 1-Click Manual Desk, Risk Controls -->
+    <div class="lg:col-span-4 space-y-5">
+
+      <!-- Session Performance Card -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-bold text-white">Session Performance</h2>
+          <span id="botStateBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">
+            BOT IDLE
+          </span>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2 text-center bg-slate-950 border border-slate-800 rounded-lg p-3">
+          <div>
+            <span class="text-[11px] text-slate-400 block">Net PnL</span>
+            <span id="sessionPnl" class="text-base font-mono font-bold text-white">$0.00</span>
+          </div>
+          <div>
+            <span class="text-[11px] text-slate-400 block">Win Rate</span>
+            <span id="sessionWinRate" class="text-base font-mono font-bold text-emerald-400">0.0%</span>
+          </div>
+          <div>
+            <span class="text-[11px] text-slate-400 block">W / L</span>
+            <span id="sessionWL" class="text-base font-mono font-bold text-slate-200">0 / 0</span>
+          </div>
+        </div>
+
+        <div id="haltAlertBox" class="hidden mt-3 p-2.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300"></div>
+      </section>
+
+      <!-- Automated Strategy Engine Control -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3.5">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white">Automated Strategy Engine</h2>
+          <label class="inline-flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" id="paperTradingToggle" checked class="rounded bg-slate-800 border-slate-700 text-emerald-500" />
+            <span>Paper Sim</span>
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Strategy Algorithm</label>
+          <select id="strategySelect" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none">
+            <option value="EVEN_ODD_STREAK">Even / Odd Streak Reversal (DIGITEVEN / DIGITODD)</option>
+            <option value="OVER_UNDER_EDGE">Over / Under Barrier Edge (DIGITOVER / DIGITUNDER)</option>
+            <option value="MATCH_DIFF_COLD">Coldest Digit Differs/Matches (DIGITDIFF / DIGITMATCH)</option>
+            <option value="RISE_FALL_MOMENTUM">Tick Momentum Breakout (CALL / PUT Rise/Fall)</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2.5">
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Streak Trigger</label>
+            <input type="number" id="streakThresholdInput" value="4" min="2" max="15" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Digit Barrier</label>
+            <input type="number" id="barrierInput" value="4" min="0" max="9" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Duration (Ticks)</label>
+            <input type="number" id="durationTicksInput" value="1" min="1" max="10" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+        </div>
+
+        <button id="toggleBotBtn" class="w-full py-2.5 px-4 rounded-lg font-bold text-xs uppercase tracking-wider bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition">
+          Start Automated Bot
+        </button>
+      </section>
+
+      <!-- Manual 1-Click Contract Execution -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+        <h2 class="text-sm font-bold text-white">1-Click Manual Execution</h2>
+        <div class="grid grid-cols-2 gap-2">
+          <button data-contract="DIGITEVEN" class="manual-trade-btn py-2 px-3 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-300 text-xs font-semibold transition">
+            DIGIT EVEN
+          </button>
+          <button data-contract="DIGITODD" class="manual-trade-btn py-2 px-3 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 text-xs font-semibold transition">
+            DIGIT ODD
+          </button>
+          <button data-contract="DIGITOVER" class="manual-trade-btn py-2 px-3 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-xs font-semibold transition">
+            DIGIT OVER
+          </button>
+          <button data-contract="DIGITUNDER" class="manual-trade-btn py-2 px-3 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-semibold transition">
+            DIGIT UNDER
+          </button>
+          <button data-contract="DIGITDIFF" class="manual-trade-btn py-2 px-3 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold transition">
+            DIGIT DIFFERS
+          </button>
+          <button data-contract="DIGITMATCH" class="manual-trade-btn py-2 px-3 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition">
+            DIGIT MATCHES
+          </button>
+          <button data-contract="CALL" class="manual-trade-btn py-2 px-3 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/30 text-teal-300 text-xs font-semibold transition">
+            RISE (CALL)
+          </button>
+          <button data-contract="PUT" class="manual-trade-btn py-2 px-3 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 border border-orange-500/30 text-orange-300 text-xs font-semibold transition">
+            FALL (PUT)
+          </button>
+        </div>
+      </section>
+
+      <!-- Risk & Stake Management -->
+      <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-bold text-white">Risk &amp; Stake Guards</h2>
+          <span class="text-xs font-mono text-slate-400">Next Stake: <strong id="nextStakeLabel" class="text-white">$1.00</strong></span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Base Stake ($)</label>
+            <input type="number" id="baseStakeInput" value="1.0" step="0.5" min="0.35" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Max Loss Streak</label>
+            <input type="number" id="maxLossStreakInput" value="5" min="1" max="20" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Take Profit ($)</label>
+            <input type="number" id="takeProfitInput" value="20.0" step="1" min="1" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-400 mb-1">Stop Loss ($)</label>
+            <input type="number" id="stopLossInput" value="15.0" step="1" min="1" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-1">
+          <label class="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input type="checkbox" id="useMartingaleToggle" class="rounded bg-slate-800 border-slate-700" />
+            <span>Enable Martingale Multiplier</span>
+          </label>
+          <input type="number" id="martingaleMultInput" value="2.0" step="0.1" min="1.1" max="5.0" class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-white text-right" />
+        </div>
+
+        <button id="saveRiskBtn" class="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition">
+          Apply Risk Parameters
+        </button>
+      </section>
+    </div>
+  </main>
+
+  <!-- Deriv API Configuration Modal -->
+  <div id="apiModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-5 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold text-white">Deriv WebSocket API Settings</h3>
+        <button id="closeApiModalBtn" class="text-slate-400 hover:text-white text-sm">&times;</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Deriv App ID</label>
+          <input type="text" id="appIdInput" value="1089" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">API Token (Optional — Leave blank for Paper Sim)</label>
+          <input type="password" id="apiTokenInput" placeholder="Paste Deriv Demo/Real API token..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Rolling Tick Window Size</label>
+          <input type="number" id="windowSizeInput" value="100" min="25" max="1000" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white" />
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button id="cancelApiModalBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">Cancel</button>
+        <button id="saveApiModalBtn" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">Reconnect &amp; Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

@@ -35,12 +35,12 @@
   };
 
   const STORAGE_KEYS = {
-    ACCOUNTS: "deriv_prodesk_accounts_v2",
-    ACTIVE_TOKEN: "deriv_prodesk_active_token_v2",
-    APP_ID: "deriv_prodesk_app_id_v2",
+    ACCOUNTS: "deriv_prodesk_accounts_v3",
+    ACTIVE_TOKEN: "deriv_prodesk_active_token_v3",
+    APP_ID: "deriv_prodesk_app_id_v3",
   };
 
-  // Per-symbol buffers for the 10-index parallel scanner
+  // Per-symbol live buffers for the 10-index parallel scanner
   const marketBuffers = {};
   ALL_SYMBOLS.forEach((sym) => {
     marketBuffers[sym] = {
@@ -49,7 +49,7 @@
       confidence: 50.0,
       optimalContract: "DIGITOVER",
       optimalBarrier: 2,
-      optimalReason: "Warming up...",
+      optimalReason: "Streaming live Deriv ticks...",
       evenStreak: 0,
       oddStreak: 0,
       ema8: null,
@@ -64,15 +64,16 @@
     appId: localStorage.getItem(STORAGE_KEYS.APP_ID) || "1089",
     apiToken: localStorage.getItem(STORAGE_KEYS.ACTIVE_TOKEN) || "",
     savedAccounts: [],
+    guestModeDismissed: false,
     windowSize: 100,
     barrier: 2,
     timeframeSec: 60,
     connectedToDeriv: false,
     authorized: false,
     botEnabled: false,
-    autoSwitchMarket: false,
     chartMode: "ticks",
     digitStats: null,
+    liveProposals: {}, // contractType -> { id, ask_price, payout, net_pct }
     mlTelemetry: {
       confidence: 0,
       regime: "CALIBRATING",
@@ -84,22 +85,22 @@
       entropy: 3.32,
       optimalContract: "DIGITOVER",
       optimalBarrier: 2,
-      optimalReason: "Warming up live Deriv stream...",
+      optimalReason: "Connecting to live Deriv stream...",
     },
     shadowBot: {
       requiredLosses: 1,
       currentShadowLosses: 0,
-      pendingVirtualTrade: null, // { symbol, contract_type, barrier, entry_quote, remaining }
+      pendingVirtualTrade: null,
     },
     trades: [],
-    pendingPaperTrades: [],
     liveOpenContracts: {},
     cooldownTicks: 0,
     account: {
-      loginid: "PAPER-SIM",
+      loginid: "GUEST",
+      email: "",
       currency: "USD",
-      balance: 10000.0,
-      is_virtual: true,
+      balance: 0.0,
+      is_virtual: false,
     },
     strategyConfig: {
       enabled: false,
@@ -112,7 +113,6 @@
       ml_threshold: 68,
       virtual_losses_required: 1,
       window_size: 100,
-      paper_trading: false,
     },
     risk: {
       base_stake: 0.35,
@@ -141,19 +141,30 @@
   let pingTimer = null;
 
   // DOM Elements
+  const loginGateOverlay = document.getElementById("loginGateOverlay");
+  const gateTokenInput = document.getElementById("gateTokenInput");
+  const gateLoginBtn = document.getElementById("gateLoginBtn");
+  const gateErrorBox = document.getElementById("gateErrorBox");
+  const gateOAuthBtn = document.getElementById("gateOAuthBtn");
+  const gateGuestPreviewBtn = document.getElementById("gateGuestPreviewBtn");
+  const gateCurrentAppId = document.getElementById("gateCurrentAppId");
+  const popupTokenPageBtn = document.getElementById("popupTokenPageBtn");
+
   const wsDot = document.getElementById("wsDot");
   const connBadge = document.getElementById("connBadge");
   const symbolSelect = document.getElementById("symbolSelect");
+  const userEmailLabel = document.getElementById("userEmailLabel");
   const accountTypeTag = document.getElementById("accountTypeTag");
   const accountSwitcherSelect = document.getElementById("accountSwitcherSelect");
   const accountLoginId = document.getElementById("accountLoginId");
   const accountBalance = document.getElementById("accountBalance");
   const connectAccountBtnLabel = document.getElementById("connectAccountBtnLabel");
-  const derivOAuthBtn = document.getElementById("derivOAuthBtn");
+  const syncDerivHistoryBtn = document.getElementById("syncDerivHistoryBtn");
   const logoutDerivBtn = document.getElementById("logoutDerivBtn");
   const liveOnboardingBar = document.getElementById("liveOnboardingBar");
   const quickTokenInput = document.getElementById("quickTokenInput");
   const quickConnectBtn = document.getElementById("quickConnectBtn");
+  const reopenLoginGateBtn = document.getElementById("reopenLoginGateBtn");
   const multiMarketScannerGrid = document.getElementById("multiMarketScannerGrid");
   const autoSwitchMarketToggle = document.getElementById("autoSwitchMarketToggle");
 
@@ -201,7 +212,6 @@
   const sessionWL = document.getElementById("sessionWL");
   const profitLockValue = document.getElementById("profitLockValue");
   const haltAlertBox = document.getElementById("haltAlertBox");
-  const paperTradingToggle = document.getElementById("paperTradingToggle");
   const strategySelect = document.getElementById("strategySelect");
   const mlThresholdInput = document.getElementById("mlThresholdInput");
   const virtualLossInput = document.getElementById("virtualLossInput");
@@ -228,7 +238,7 @@
   const chartModeCandlesBtn = document.getElementById("chartModeCandles");
 
   // ============================================================================
-  // 1. MULTI-USER DERIV OAUTH2 + API TOKEN BROWSER AUTHENTICATION
+  // 1. BROWSER LOGIN GATE & DERIV OAUTH / TOKEN SESSION MANAGER
   // ============================================================================
 
   function parseDerivOAuthRedirect() {
@@ -248,7 +258,6 @@
       localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, accounts[0].token);
       state.savedAccounts = accounts;
       state.apiToken = accounts[0].token;
-      paperTradingToggle.checked = false;
       const cleanUrl = window.location.origin + window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
     } else {
@@ -260,6 +269,10 @@
       }
     }
 
+    gateCurrentAppId.textContent = state.appId;
+    if (state.apiToken) {
+      loginGateOverlay.classList.add("hidden");
+    }
     renderAccountSwitcher();
   }
 
@@ -268,41 +281,47 @@
 
     state.savedAccounts.forEach((item) => {
       const opt = document.createElement("option");
-      opt.value = item.token;
+      opt.value = item.token || item.acct;
       const isDemo = item.acct.startsWith("VRTC") || item.acct.startsWith("VRT");
       opt.textContent = `${item.acct} (${isDemo ? "DEMO" : "REAL"} ${item.cur})`;
-      if (item.token === state.apiToken) opt.selected = true;
+      if (item.token === state.apiToken || item.acct === state.account.loginid) {
+        opt.selected = true;
+      }
       accountSwitcherSelect.appendChild(opt);
     });
 
     if (
       state.apiToken &&
-      !state.savedAccounts.some((a) => a.token === state.apiToken)
+      !state.savedAccounts.some(
+        (a) => a.token === state.apiToken || a.acct === state.account.loginid
+      )
     ) {
       const opt = document.createElement("option");
       opt.value = state.apiToken;
       opt.textContent =
-        state.account.loginid !== "PAPER-SIM"
+        state.account.loginid !== "GUEST"
           ? `${state.account.loginid} (${state.account.currency})`
-          : "DERIV TOKEN ACCOUNT";
+          : "AUTHORIZING DERIV...";
       opt.selected = true;
       accountSwitcherSelect.appendChild(opt);
     }
 
-    const simOpt = document.createElement("option");
-    simOpt.value = "PAPER-SIM";
-    simOpt.textContent = "PAPER-SIM (PRACTICE)";
-    if (!state.apiToken) simOpt.selected = true;
-    accountSwitcherSelect.appendChild(simOpt);
+    if (!state.apiToken) {
+      const guestOpt = document.createElement("option");
+      guestOpt.value = "GUEST";
+      guestOpt.textContent = "Not Signed In (Guest)";
+      guestOpt.selected = true;
+      accountSwitcherSelect.appendChild(guestOpt);
+    }
 
     if (state.apiToken) {
       logoutDerivBtn.classList.remove("hidden");
       liveOnboardingBar.classList.add("hidden");
-      connectAccountBtnLabel.textContent = "Account Settings";
+      connectAccountBtnLabel.textContent = "Account / App ID";
     } else {
       logoutDerivBtn.classList.add("hidden");
       liveOnboardingBar.classList.remove("hidden");
-      connectAccountBtnLabel.textContent = "Connect Deriv Account";
+      connectAccountBtnLabel.textContent = "Sign In to Deriv";
     }
   }
 
@@ -317,7 +336,89 @@
   }
 
   // ============================================================================
-  // 2. TECHNICAL INDICATORS (EMA 8/21, RSI 7, VELOCITY) & ML QUANT ENGINE
+  // 2. DIRECT DERIV LIVE PROPOSALS, PROFIT TABLE & OFFICIAL CANDLE FEEDS
+  // ============================================================================
+
+  function subscribeLiveDerivProposals() {
+    if (!directDerivWS || directDerivWS.readyState !== WebSocket.OPEN) return;
+
+    // Forget previous proposal streams before re-subscribing with new symbol/stake/barrier
+    directDerivWS.send(JSON.stringify({ forget_all: "proposal" }));
+
+    const stake = Math.max(0.35, Number(state.risk.current_stake || 0.35));
+    const dur = Number(durationTicksInput.value || 1);
+    const bar = Number(barrierInput.value || 2);
+    const cur = state.account.currency || "USD";
+
+    const contractsToQuote = [
+      { type: "DIGITEVEN", needsBarrier: false },
+      { type: "DIGITODD", needsBarrier: false },
+      { type: "DIGITOVER", needsBarrier: true, barrier: bar },
+      { type: "DIGITUNDER", needsBarrier: true, barrier: bar },
+      { type: "DIGITDIFF", needsBarrier: true, barrier: bar },
+      { type: "DIGITMATCH", needsBarrier: true, barrier: bar },
+      { type: "CALL", needsBarrier: false },
+      { type: "PUT", needsBarrier: false },
+    ];
+
+    contractsToQuote.forEach((item) => {
+      const req = {
+        proposal: 1,
+        subscribe: 1,
+        amount: stake,
+        basis: "stake",
+        contract_type: item.type,
+        currency: cur,
+        duration: dur,
+        duration_unit: "t",
+        symbol: state.symbol,
+        passthrough: { contract_type: item.type },
+      };
+      if (item.needsBarrier) {
+        req.barrier = String(item.barrier);
+      }
+      directDerivWS.send(JSON.stringify(req));
+    });
+  }
+
+  function subscribeOfficialSymbolCandles(sym) {
+    if (!directDerivWS || directDerivWS.readyState !== WebSocket.OPEN) return;
+    directDerivWS.send(JSON.stringify({ forget_all: "candles" }));
+    directDerivWS.send(
+      JSON.stringify({
+        ticks_history: sym,
+        adjust_start_time: 1,
+        count: 60,
+        end: "latest",
+        style: "candles",
+        granularity: 60,
+        subscribe: 1,
+        passthrough: { candle_symbol: sym },
+      })
+    );
+  }
+
+  function syncDerivAccountData() {
+    if (!directDerivWS || directDerivWS.readyState !== WebSocket.OPEN || !state.authorized) {
+      return;
+    }
+    // 1. Live wallet balance stream
+    directDerivWS.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+    // 2. Real historical trades from Deriv profit_table
+    directDerivWS.send(
+      JSON.stringify({
+        profit_table: 1,
+        description: 1,
+        limit: 30,
+        sort: "DESC",
+      })
+    );
+    // 3. Currently open contracts from Deriv portfolio
+    directDerivWS.send(JSON.stringify({ portfolio: 1 }));
+  }
+
+  // ============================================================================
+  // 3. TECHNICAL INDICATORS (EMA 8/21, RSI 7, VELOCITY) & ML QUANT ENGINE
   // ============================================================================
 
   function updateSymbolMicrostructure(sym, quote) {
@@ -403,7 +504,6 @@
       if (counts[d] < counts[coldest]) coldest = d;
     }
 
-    // 1st-Order Markov Transition Matrix
     const matrix = Array.from({ length: 10 }, () => Array(10).fill(0));
     const rowSums = Array(10).fill(0);
     for (let i = 0; i < slice.length - 1; i++) {
@@ -461,24 +561,23 @@
       Math.min(7, paritySkew * 0.55);
     const confidence = Math.min(97.0, Math.max(30.0, Number(rawConf.toFixed(1))));
 
-    // Select high-EV optimal contract
     const recent3 = slice.slice(-3).map((t) => t.last_digit);
     const over2Pct = [3, 4, 5, 6, 7, 8, 9].reduce((acc, d) => acc + percentages[d], 0);
     const under7Pct = [0, 1, 2, 3, 4, 5, 6].reduce((acc, d) => acc + percentages[d], 0);
 
     let optimalContract = "DIGITOVER";
     let optimalBarrier = 2;
-    let optimalReason = `Over 2 freq=${over2Pct.toFixed(1)}% (Payout ~64%)`;
+    let optimalReason = `Over 2 freq=${over2Pct.toFixed(1)}% (Live Deriv Feed)`;
 
     if (maxStreak >= 4) {
       if (oddStreak >= 4) {
         optimalContract = "DIGITEVEN";
         optimalBarrier = null;
-        optimalReason = `${oddStreak}x Odd Streak Exhaustion -> BUY EVEN (~95%)`;
+        optimalReason = `${oddStreak}x Odd Streak Exhaustion -> BUY EVEN`;
       } else {
         optimalContract = "DIGITODD";
         optimalBarrier = null;
-        optimalReason = `${evenStreak}x Even Streak Exhaustion -> BUY ODD (~95%)`;
+        optimalReason = `${evenStreak}x Even Streak Exhaustion -> BUY ODD`;
       }
     } else if (recent3.length >= 2 && recent3.slice(-2).every((d) => d <= 2) && over2Pct >= 68) {
       optimalContract = "DIGITOVER";
@@ -547,17 +646,17 @@
       streak: Math.max(marketBuffers[sym].evenStreak, marketBuffers[sym].oddStreak),
     })).sort((a, b) => b.conf - a.conf);
 
-    // If Auto-Switch to Best Market is enabled and no open contract is pending
     if (
       autoSwitchMarketToggle.checked &&
       ranked[0] &&
       ranked[0].conf >= 72 &&
       ranked[0].sym !== state.symbol &&
-      state.pendingPaperTrades.length === 0 &&
       Object.keys(state.liveOpenContracts).length === 0
     ) {
       state.symbol = ranked[0].sym;
       symbolSelect.value = state.symbol;
+      subscribeOfficialSymbolCandles(state.symbol);
+      subscribeLiveDerivProposals();
     }
 
     multiMarketScannerGrid.innerHTML = ranked
@@ -588,9 +687,11 @@
     document.querySelectorAll(".scanner-pill").forEach((pill) => {
       pill.addEventListener("click", () => {
         const targetSym = pill.getAttribute("data-scan-sym");
-        if (targetSym) {
+        if (targetSym && targetSym !== state.symbol) {
           state.symbol = targetSym;
           symbolSelect.value = targetSym;
+          subscribeOfficialSymbolCandles(state.symbol);
+          subscribeLiveDerivProposals();
           const stats = computeSymbolStatsAndML(state.symbol);
           const ticks = marketBuffers[state.symbol].ticks;
           if (ticks.length) {
@@ -606,7 +707,7 @@
   }
 
   // ============================================================================
-  // 3. VIRTUAL LOSS FILTER ("SHADOW BOT") & CROSS-CONTRACT SMART RECOVERY
+  // 4. VIRTUAL LOSS FILTER ("SHADOW BOT") & CROSS-CONTRACT SMART RECOVERY
   // ============================================================================
 
   function updateShadowBadge() {
@@ -628,7 +729,6 @@
   }
 
   function getSmartRecoveryOrder(defaultContract, defaultBarrier, stats) {
-    // If no deficit to recover or Cross-Contract Recovery is unchecked, return normal order
     if (
       state.risk.consecutive_losses === 0 ||
       state.risk.recovery_deficit <= 0 ||
@@ -642,10 +742,9 @@
       };
     }
 
-    // Cross-Contract Recovery: Switch to high-payout OVER 4 / UNDER 5 (~140% net profit) or EVEN/ODD (~95%)
     let recContract = "DIGITOVER";
     let recBarrier = 4;
-    let estRatio = 1.38; // ~138% net profit on OVER 4 / UNDER 5
+    let estRatio = 1.38;
 
     if (stats.under_pct > stats.over_pct) {
       recContract = "DIGITUNDER";
@@ -662,7 +761,6 @@
       estRatio = 0.95;
     }
 
-    // Calculate minimal stake needed to recover deficit + 1 base profit unit
     const targetGain = state.risk.recovery_deficit + state.risk.base_stake * 0.5;
     const calculatedStake = Math.max(0.35, Number((targetGain / estRatio).toFixed(2)));
 
@@ -675,7 +773,7 @@
   }
 
   // ============================================================================
-  // 4. UI RENDERING (DIGIT MATRIX, BANNER, CHART, TRADE BLOTTER)
+  // 5. UI RENDERING (DIGIT MATRIX, BANNER, CHART, TRADE BLOTTER)
   // ============================================================================
 
   function renderMLTelemetry() {
@@ -847,19 +945,23 @@
 
     if (connected) {
       wsDot.className = "inline-block w-2 h-2 bg-[#00c853]";
-      connBadge.textContent = authorized ? "LIVE DERIV AUTHENTICATED" : "LIVE DERIV FEED (10 INDICES)";
+      connBadge.textContent = authorized
+        ? `LIVE DERIV (${account.loginid})`
+        : "LIVE DERIV FEED (GUEST)";
       connBadge.className =
         "font-mono text-[10px] px-1.5 py-0.5 bg-[#00c853]/15 border border-[#00c853]/40 text-[#00c853]";
     } else {
       wsDot.className = "inline-block w-2 h-2 bg-[#ffab00]";
-      connBadge.textContent = "RECONNECTING...";
+      connBadge.textContent = "RECONNECTING TO DERIV...";
       connBadge.className =
         "font-mono text-[10px] px-1.5 py-0.5 bg-[#ffab00]/15 border border-[#ffab00]/40 text-[#ffab00]";
     }
 
     if (account) {
-      const loginid = account.loginid || "PAPER-SIM";
+      const loginid = account.loginid || "GUEST";
       accountLoginId.textContent = loginid;
+      userEmailLabel.textContent = account.email || (authorized ? loginid : "Not Signed In");
+
       const bal = Number(account.balance || 0);
       const cur = account.currency || "USD";
       accountBalance.textContent = `${cur === "USD" ? "$" : cur + " "}${bal.toLocaleString(
@@ -870,16 +972,15 @@
         }
       )}`;
 
-      const isSim = loginid === "PAPER-SIM" || paperTradingToggle.checked;
-      orderTicketModeLabel.textContent = isSim
-        ? "SIMULATION FILL"
-        : `LIVE DERIV FILL (${loginid})`;
-      orderTicketModeLabel.className = isSim
-        ? "font-mono text-[10px] text-[#ffab00]"
-        : "font-mono text-[10px] text-[#00c853] font-bold";
+      orderTicketModeLabel.textContent = authorized
+        ? `DIRECT DERIV FILL (${loginid})`
+        : "SIGN IN TO EXECUTE";
+      orderTicketModeLabel.className = authorized
+        ? "font-mono text-[10px] text-[#00c853] font-bold"
+        : "font-mono text-[10px] text-[#ffab00]";
 
-      if (loginid === "PAPER-SIM") {
-        accountTypeTag.textContent = "SIM";
+      if (!authorized || loginid === "GUEST") {
+        accountTypeTag.textContent = "GUEST";
         accountTypeTag.className =
           "text-[9px] font-mono font-bold px-1 bg-[#ffab00]/15 text-[#ffab00] border border-[#ffab00]/30";
       } else if (account.is_virtual || loginid.startsWith("VRTC")) {
@@ -918,17 +1019,17 @@
     if (strategyConfig) {
       state.botEnabled = Boolean(strategyConfig.enabled);
       if (state.botEnabled) {
-        botStateBadge.textContent = "ACTIVE // AUTO-EXEC";
+        botStateBadge.textContent = "ACTIVE // LIVE DERIV BOT";
         botStateBadge.className =
           "font-mono text-[10px] px-2 py-0.5 bg-[#00c853]/15 text-[#00c853] border border-[#00c853]/40 font-bold";
-        toggleBotBtn.textContent = "DISENGAGE AUTOMATED ML BOT";
+        toggleBotBtn.textContent = "DISENGAGE LIVE AUTOMATED ML BOT";
         toggleBotBtn.className =
           "terminal-btn w-full py-2.5 bg-[#ff3d57] hover:bg-[#e0324a] text-white font-bold text-xs";
       } else {
         botStateBadge.textContent = "STANDBY";
         botStateBadge.className =
           "font-mono text-[10px] px-2 py-0.5 bg-[#151a24] text-[#8b949e] border border-[#1e2533]";
-        toggleBotBtn.textContent = "ENGAGE AUTOMATED ML BOT";
+        toggleBotBtn.textContent = "ENGAGE LIVE AUTOMATED ML BOT";
         toggleBotBtn.className =
           "terminal-btn w-full py-2.5 bg-[#00c853] hover:bg-[#00b248] text-[#090b0f] font-bold text-xs";
       }
@@ -940,7 +1041,7 @@
       tradeHistoryBody.innerHTML = `
         <tr>
           <td colspan="7" class="py-6 text-center text-[#586069] font-sans">
-            No contracts executed in current session. Authorize your Deriv account or engage the ML Auto-Bot.
+            No contracts loaded yet. Sign in with your Deriv account to pull your live <code class="font-mono">profit_table</code> and execute contracts.
           </td>
         </tr>
       `;
@@ -968,19 +1069,18 @@
             : "text-[#8b949e]";
         const barrierText =
           t.barrier !== null && t.barrier !== undefined ? ` [${t.barrier}]` : "";
-        const execMode = t.is_paper ? "SIM" : "DERIV LIVE";
 
         return `
           <tr class="hover:bg-[#151a24]/60">
-            <td class="py-1.5 px-2.5 text-[#8b949e]">${t.id} <span class="text-[9px] text-[#2979ff]">(${execMode})</span></td>
+            <td class="py-1.5 px-2.5 text-[#8b949e]">${t.id}</td>
             <td class="py-1.5 px-2 font-bold text-white">${t.symbol} // ${t.contract_type}${barrierText}</td>
-            <td class="py-1.5 px-2">${t.entry_digit} &rarr; ${t.exit_digit ?? "-"}</td>
+            <td class="py-1.5 px-2">${t.entry_digit ?? t.entry_quote ?? "-"} &rarr; ${t.exit_digit ?? t.exit_quote ?? "-"}</td>
             <td class="py-1.5 px-2">$${Number(t.stake).toFixed(2)}</td>
             <td class="py-1.5 px-2">
               <span class="px-1.5 py-0.5 border text-[9px] font-bold ${badgeColor}">${t.status}</span>
             </td>
             <td class="py-1.5 px-2 font-bold ${profitColor}">${profitStr}</td>
-            <td class="py-1.5 px-2.5 font-sans text-[#8b949e] truncate max-w-[240px]" title="${t.reason}">${t.reason}</td>
+            <td class="py-1.5 px-2.5 font-sans text-[#8b949e] truncate max-w-[260px]" title="${t.reason}">${t.reason}</td>
           </tr>
         `;
       })
@@ -1041,7 +1141,7 @@
       ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      const candles = buf.candles.slice(-36);
+      const candles = buf.candles.slice(-40);
       if (!candles.length) return;
 
       const highs = candles.map((c) => c.high);
@@ -1077,7 +1177,7 @@
   }
 
   // ============================================================================
-  // 5. LIVE DERIV EXECUTION & CONTRACT SETTLEMENT ENGINE
+  // 6. DIRECT LIVE DERIV ORDER EXECUTION & CONTRACT SETTLEMENT
   // ============================================================================
 
   function extractLastDigitClient(quote, pipSize) {
@@ -1086,24 +1186,8 @@
     return { formatted, lastDigit: parseInt(lastChar, 10) || 0 };
   }
 
-  function estimateClientPayoutRatio(contractType, barrier) {
-    if (PAYOUT_MULTIPLIERS[contractType] !== undefined) {
-      return PAYOUT_MULTIPLIERS[contractType];
-    }
-    const b = barrier ?? 4;
-    if (contractType === "DIGITOVER") {
-      const winDigits = Math.max(1, 9 - b);
-      return Number((0.96 / (winDigits / 10) - 1).toFixed(2));
-    }
-    if (contractType === "DIGITUNDER") {
-      const winDigits = Math.max(1, b);
-      return Number((0.96 / (winDigits / 10) - 1).toFixed(2));
-    }
-    return 0.95;
-  }
-
   function evaluateClientContract(contractType, entryQuote, exitQuote, exitDigit, barrier) {
-    const b = barrier ?? 4;
+    const b = barrier ?? 2;
     if (contractType === "DIGITEVEN") return exitDigit % 2 === 0;
     if (contractType === "DIGITODD") return exitDigit % 2 === 1;
     if (contractType === "DIGITOVER") return exitDigit > b;
@@ -1165,23 +1249,24 @@
       }
     }
 
-    if (state.account.loginid === "PAPER-SIM") {
-      state.account.balance = Number((10000 + state.risk.total_profit).toFixed(2));
-    }
-
     updateShadowBadge();
     updateRiskAndBotUI(state.risk, state.strategyConfig);
     updateConnectionHeader(state.connectedToDeriv, state.authorized, state.account, state.symbol);
     renderTradesTable();
   }
 
-  function executeContractOrder(
+  function executeLiveDerivContract(
     contractType,
     barrier,
     durationTicks,
     reason,
     overrideStake = null
   ) {
+    if (!state.authorized || !directDerivWS) {
+      loginGateOverlay.classList.remove("hidden");
+      return;
+    }
+
     const symTicks = marketBuffers[state.symbol].ticks;
     const lastTick = symTicks[symTicks.length - 1];
     if (!lastTick) return;
@@ -1190,15 +1275,13 @@
       0.35,
       Number((overrideStake !== null ? overrideStake : state.risk.current_stake).toFixed(2))
     );
-    const forceSim = paperTradingToggle.checked;
-    const isPaper = forceSim || !state.authorized || !directDerivWS;
     const needsBarrier = ["DIGITOVER", "DIGITUNDER", "DIGITMATCH", "DIGITDIFF"].includes(
       contractType
     );
     const cleanBarrier = needsBarrier ? (barrier ?? state.barrier) : null;
 
     const trade = {
-      id: `ORD-${Math.random().toString(16).slice(2, 8).toUpperCase()}`,
+      id: `PENDING-${Math.random().toString(16).slice(2, 6).toUpperCase()}`,
       timestamp: Math.floor(Date.now() / 1000),
       symbol: state.symbol,
       strategy: state.strategyConfig.strategy_type,
@@ -1213,43 +1296,38 @@
       status: "OPEN",
       payout: 0,
       profit: 0,
-      is_paper: isPaper,
       reason,
     };
 
     state.trades.unshift(trade);
     renderTradesTable();
 
-    if (isPaper) {
-      state.pendingPaperTrades.push({ trade, remaining: durationTicks });
-    } else {
-      const params = {
-        amount: stake,
-        basis: "stake",
-        contract_type: contractType,
-        currency: state.account.currency || "USD",
-        duration: durationTicks,
-        duration_unit: "t",
-        symbol: state.symbol,
-      };
-      if (needsBarrier) {
-        params.barrier = String(cleanBarrier);
-      }
-      state.liveOpenContracts[trade.id] = trade;
-      directDerivWS.send(
-        JSON.stringify({
-          buy: 1,
-          price: stake,
-          parameters: params,
-          passthrough: { trade_id: trade.id },
-        })
-      );
+    const params = {
+      amount: stake,
+      basis: "stake",
+      contract_type: contractType,
+      currency: state.account.currency || "USD",
+      duration: durationTicks,
+      duration_unit: "t",
+      symbol: state.symbol,
+    };
+    if (needsBarrier) {
+      params.barrier = String(cleanBarrier);
     }
+
+    state.liveOpenContracts[trade.id] = trade;
+    directDerivWS.send(
+      JSON.stringify({
+        buy: 1,
+        price: stake,
+        parameters: params,
+        passthrough: { trade_id: trade.id },
+      })
+    );
   }
 
   function dispatchWithShadowFilter(contractType, barrier, durationTicks, reason, stats) {
     const reqVirtual = Number(virtualLossInput.value || 0);
-    // If Shadow Filter still needs to absorb virtual losses first
     if (reqVirtual > 0 && state.shadowBot.currentShadowLosses < reqVirtual) {
       const symTicks = marketBuffers[state.symbol].ticks;
       const lastTick = symTicks[symTicks.length - 1];
@@ -1265,7 +1343,6 @@
       return;
     }
 
-    // Shadow filter satisfied -> check if Cross-Contract Smart Recovery applies
     const rec = getSmartRecoveryOrder(contractType, barrier, stats);
     const finalReason = rec.isRecovery
       ? `[SMART RECOVERY $${rec.stake}] ${rec.contractType} ${rec.barrier ?? ""} // ${reason}`
@@ -1273,13 +1350,18 @@
 
     state.shadowBot.currentShadowLosses = 0;
     updateShadowBadge();
-    executeContractOrder(rec.contractType, rec.barrier, durationTicks, finalReason, rec.stake);
+    executeLiveDerivContract(
+      rec.contractType,
+      rec.barrier,
+      durationTicks,
+      finalReason,
+      rec.stake
+    );
   }
 
   function evaluateAutomatedStrategy(tick, stats) {
-    if (!state.strategyConfig.enabled || !stats) return;
+    if (!state.strategyConfig.enabled || !stats || !state.authorized) return;
     if (
-      state.pendingPaperTrades.length > 0 ||
       Object.keys(state.liveOpenContracts).length > 0 ||
       state.shadowBot.pendingVirtualTrade !== null
     ) {
@@ -1292,7 +1374,6 @@
       return;
     }
 
-    // Risk & Profit-Lock Guards
     if (state.risk.total_profit >= state.risk.take_profit) {
       state.risk.halt_reason = `SESSION TAKE PROFIT REACHED (+$${state.risk.total_profit.toFixed(2)})`;
       state.strategyConfig.enabled = false;
@@ -1366,7 +1447,7 @@
             "CALL",
             null,
             Math.max(5, dur),
-            `EMA8>EMA21 + RSI(${buf.rsi7}) Pullback + Positive Velocity -> CALL`,
+            `EMA8>EMA21 + RSI(${buf.rsi7}) Pullback + Velocity -> CALL`,
             stats
           );
         } else if (buf.ema8 < buf.ema21 && buf.rsi7 > 64 && buf.velocity < 0) {
@@ -1374,7 +1455,7 @@
             "PUT",
             null,
             Math.max(5, dur),
-            `EMA8<EMA21 + RSI(${buf.rsi7}) Spike + Negative Velocity -> PUT`,
+            `EMA8<EMA21 + RSI(${buf.rsi7}) Spike + Velocity -> PUT`,
             stats
           );
         }
@@ -1452,32 +1533,10 @@
 
     updateSymbolMicrostructure(sym, tick.quote);
 
-    const bucket = Math.floor(epoch / state.timeframeSec) * state.timeframeSec;
-    const lastCandle = buf.candles[buf.candles.length - 1];
-    if (!lastCandle || lastCandle.open_time !== bucket) {
-      buf.candles.push({
-        symbol: sym,
-        timeframe_sec: state.timeframeSec,
-        open_time: bucket,
-        open: tick.quote,
-        high: tick.quote,
-        low: tick.quote,
-        close: tick.quote,
-        tick_count: 1,
-      });
-      if (buf.candles.length > 100) buf.candles.shift();
-    } else {
-      lastCandle.high = Math.max(lastCandle.high, tick.quote);
-      lastCandle.low = Math.min(lastCandle.low, tick.quote);
-      lastCandle.close = tick.quote;
-      lastCandle.tick_count++;
-    }
-
     if (isHistorical) return;
 
     const stats = computeSymbolStatsAndML(sym);
 
-    // Settle virtual shadow trade if pending on this symbol
     if (
       state.shadowBot.pendingVirtualTrade &&
       state.shadowBot.pendingVirtualTrade.symbol === sym
@@ -1502,40 +1561,6 @@
       }
     }
 
-    // Settle pending paper trades on this symbol
-    if (state.pendingPaperTrades.length > 0) {
-      const nextPending = [];
-      state.pendingPaperTrades.forEach((item) => {
-        if (item.trade.symbol === sym) {
-          item.remaining--;
-          if (item.remaining <= 0) {
-            const t = item.trade;
-            const won = evaluateClientContract(
-              t.contract_type,
-              t.entry_quote,
-              tick.quote,
-              tick.last_digit,
-              t.barrier
-            );
-            t.exit_quote = tick.quote;
-            t.exit_digit = tick.last_digit;
-            if (won) {
-              const ratio = estimateClientPayoutRatio(t.contract_type, t.barrier);
-              const profit = Number((t.stake * ratio).toFixed(2));
-              recordCompletedTradeOutcome(t, true, profit, t.stake + profit);
-            } else {
-              recordCompletedTradeOutcome(t, false, -t.stake, 0);
-            }
-          } else {
-            nextPending.push(item);
-          }
-        } else {
-          nextPending.push(item);
-        }
-      });
-      state.pendingPaperTrades = nextPending;
-    }
-
     if (sym === state.symbol) {
       evaluateAutomatedStrategy(tick, stats);
       updateTickBanner(tick);
@@ -1554,7 +1579,7 @@
   }
 
   // ============================================================================
-  // 6. DERIV WEBSOCKET CONNECTION (SUBSCRIBES TO ALL 10 VOLATILITY INDICES)
+  // 7. DERIV WEBSOCKET CONNECTION (DIRECT ACCOUNT + MARKET + PROPOSAL + CANDLES)
   // ============================================================================
 
   function connectDerivWebSocket() {
@@ -1567,15 +1592,6 @@
     if (pingTimer) clearInterval(pingTimer);
 
     state.authorized = false;
-    if (!state.apiToken) {
-      state.account = {
-        loginid: "PAPER-SIM",
-        currency: "USD",
-        balance: Number((10000 + state.risk.total_profit).toFixed(2)),
-        is_virtual: true,
-      };
-    }
-
     const wsUrl = `wss://ws.derivws.com/websockets/v3?app_id=${encodeURIComponent(
       state.appId || "1089"
     )}`;
@@ -1589,7 +1605,7 @@
         directDerivWS.send(JSON.stringify({ authorize: state.apiToken.trim() }));
       }
 
-      // Subscribe to all 10 Volatility indices in parallel for real-time scanner
+      // 1. Subscribe to all 10 Volatility indices live tick streams
       ALL_SYMBOLS.forEach((sym) => {
         directDerivWS.send(
           JSON.stringify({
@@ -1604,6 +1620,12 @@
         );
       });
 
+      // 2. Subscribe to official Deriv 1m OHLC candles for active symbol
+      subscribeOfficialSymbolCandles(state.symbol);
+
+      // 3. Subscribe to live Deriv payout proposals for active symbol
+      subscribeLiveDerivProposals();
+
       pingTimer = setInterval(() => {
         if (directDerivWS && directDerivWS.readyState === WebSocket.OPEN) {
           directDerivWS.send(JSON.stringify({ ping: 1 }));
@@ -1615,27 +1637,165 @@
       const msg = JSON.parse(event.data);
 
       if (msg.error) {
-        haltAlertBox.textContent = `DERIV API // ${msg.error.message}`;
-        haltAlertBox.classList.remove("hidden");
+        if (msg.msg_type === "authorize") {
+          gateErrorBox.textContent = `Deriv Login Error: ${msg.error.message}`;
+          gateErrorBox.classList.remove("hidden");
+        } else if (msg.msg_type === "app_register") {
+          const stEl = document.getElementById("appRegisterStatus");
+          stEl.textContent = `Error: ${msg.error.message}`;
+          stEl.className = "text-[11px] font-mono text-[#ff3d57] pt-1";
+          stEl.classList.remove("hidden");
+        } else if (msg.msg_type !== "proposal") {
+          haltAlertBox.textContent = `DERIV API // ${msg.error.message}`;
+          haltAlertBox.classList.remove("hidden");
+        }
         return;
       }
 
+      // A. User Authenticated -> Unlock Login Gate & Pull All Live Account Data
       if (msg.msg_type === "authorize" && msg.authorize) {
         state.authorized = true;
-        paperTradingToggle.checked = false;
+        gateErrorBox.classList.add("hidden");
+        loginGateOverlay.classList.add("hidden");
+
         state.account = {
           loginid: msg.authorize.loginid || "DERIV",
+          email: msg.authorize.email || "",
           currency: msg.authorize.currency || "USD",
           balance: Number(msg.authorize.balance || 0),
           is_virtual: Boolean(msg.authorize.is_virtual),
         };
+
+        // Import user's full Deriv account_list if not already populated via OAuth
+        if (Array.isArray(msg.authorize.account_list) && state.savedAccounts.length === 0) {
+          state.savedAccounts = msg.authorize.account_list.map((acc) => ({
+            acct: acc.loginid,
+            token: acc.loginid === state.account.loginid ? state.apiToken : "",
+            cur: acc.currency || "USD",
+          }));
+        }
+
         renderAccountSwitcher();
-        directDerivWS.send(JSON.stringify({ balance: 1, subscribe: 1 }));
         updateConnectionHeader(true, true, state.account, state.symbol);
-      } else if (msg.msg_type === "balance" && msg.balance) {
+        syncDerivAccountData();
+        subscribeLiveDerivProposals();
+      }
+
+      // B. Live Deriv Account Balance Stream
+      else if (msg.msg_type === "balance" && msg.balance) {
         state.account.balance = Number(msg.balance.balance ?? state.account.balance);
+        if (msg.balance.currency) state.account.currency = msg.balance.currency;
         updateConnectionHeader(true, state.authorized, state.account, state.symbol);
-      } else if (msg.msg_type === "history" && msg.history) {
+      }
+
+      // C. Direct Deriv Profit Table (User's Real Past Contracts from Deriv)
+      else if (msg.msg_type === "profit_table" && msg.profit_table) {
+        const transactions = msg.profit_table.transactions || [];
+        const historical = transactions.map((tx) => {
+          const buyP = Number(tx.buy_price || 0);
+          const sellP = Number(tx.sell_price || 0);
+          const netPnl = Number((sellP - buyP).toFixed(2));
+          return {
+            id: String(tx.contract_id || tx.transaction_id),
+            timestamp: Number(tx.purchase_time || 0),
+            symbol: tx.shortcode ? tx.shortcode.split("_")[1] || state.symbol : state.symbol,
+            contract_type: tx.shortcode ? tx.shortcode.split("_")[0] : "CONTRACT",
+            barrier: null,
+            stake: buyP,
+            entry_digit: "-",
+            exit_digit: "-",
+            status: netPnl > 0 ? "WON" : "LOST",
+            payout: sellP,
+            profit: netPnl,
+            reason: tx.longcode || "Synced from Deriv profit_table",
+          };
+        });
+
+        // Merge with any currently open live contracts
+        const openOnes = Object.values(state.liveOpenContracts);
+        state.trades = [...openOnes, ...historical];
+        renderTradesTable();
+      }
+
+      // D. Live Portfolio Open Contracts
+      else if (msg.msg_type === "portfolio" && msg.portfolio) {
+        const contracts = msg.portfolio.contracts || [];
+        contracts.forEach((c) => {
+          directDerivWS.send(
+            JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: c.contract_id,
+              subscribe: 1,
+            })
+          );
+        });
+      }
+
+      // E. Live Deriv Payout Proposals (Updates Order Ticket Buttons)
+      else if (msg.msg_type === "proposal" && msg.proposal) {
+        const ct = msg.passthrough && msg.passthrough.contract_type;
+        const ask = Number(msg.proposal.ask_price || state.risk.current_stake);
+        const payout = Number(msg.proposal.payout || 0);
+        if (ct && ask > 0 && payout > 0) {
+          const netPct = Number((((payout - ask) / ask) * 100).toFixed(1));
+          state.liveProposals[ct] = {
+            id: msg.proposal.id,
+            ask_price: ask,
+            payout,
+            net_pct: netPct,
+          };
+          const el = document.getElementById(`prop-${ct}`);
+          if (el) {
+            el.textContent = `+$${(payout - ask).toFixed(2)} (+${netPct}%)`;
+            el.className = "text-[9px] text-[#00c853] font-bold";
+          }
+        }
+      }
+
+      // F. Official Deriv 1m OHLC Server Candles
+      else if (msg.msg_type === "candles" && msg.candles) {
+        const sym = (msg.passthrough && msg.passthrough.candle_symbol) || state.symbol;
+        const buf = marketBuffers[sym];
+        if (buf) {
+          buf.candles = msg.candles.map((c) => ({
+            symbol: sym,
+            timeframe_sec: 60,
+            open_time: Number(c.epoch),
+            open: Number(c.open),
+            high: Number(c.high),
+            low: Number(c.low),
+            close: Number(c.close),
+          }));
+          if (sym === state.symbol) drawChart();
+        }
+      } else if (msg.msg_type === "ohlc" && msg.ohlc) {
+        const o = msg.ohlc;
+        const sym = o.symbol || state.symbol;
+        const buf = marketBuffers[sym];
+        if (buf) {
+          const openTime = Number(o.open_time);
+          const candle = {
+            symbol: sym,
+            timeframe_sec: 60,
+            open_time: openTime,
+            open: Number(o.open),
+            high: Number(o.high),
+            low: Number(o.low),
+            close: Number(o.close),
+          };
+          const last = buf.candles[buf.candles.length - 1];
+          if (last && last.open_time === openTime) {
+            buf.candles[buf.candles.length - 1] = candle;
+          } else {
+            buf.candles.push(candle);
+            if (buf.candles.length > 100) buf.candles.shift();
+          }
+          if (sym === state.symbol && state.chartMode === "candles") drawChart();
+        }
+      }
+
+      // G. Historical Ticks & Live Tick Stream
+      else if (msg.msg_type === "history" && msg.history) {
         const sym =
           (msg.passthrough && msg.passthrough.symbol) ||
           (msg.echo_req && msg.echo_req.ticks_history) ||
@@ -1644,7 +1804,6 @@
         const prices = msg.history.prices || [];
         const times = msg.history.times || [];
         marketBuffers[sym].ticks = [];
-        marketBuffers[sym].candles = [];
         for (let i = 0; i < prices.length; i++) {
           processIncomingTick(
             sym,
@@ -1659,9 +1818,16 @@
         const pipSize =
           msg.tick.pip_size !== undefined ? Number(msg.tick.pip_size) : PIP_SIZES[sym] || 2;
         processIncomingTick(sym, Number(msg.tick.quote), Number(msg.tick.epoch), pipSize, false);
-      } else if (msg.msg_type === "buy" && msg.buy) {
+      }
+
+      // H. Live Buy Execution & Open Contract Settlement
+      else if (msg.msg_type === "buy" && msg.buy) {
         const contractId = msg.buy.contract_id;
         const tradeId = msg.passthrough && msg.passthrough.trade_id;
+        if (tradeId && state.liveOpenContracts[tradeId]) {
+          state.liveOpenContracts[tradeId].id = String(contractId);
+          renderTradesTable();
+        }
         if (contractId && directDerivWS) {
           directDerivWS.send(
             JSON.stringify({
@@ -1690,6 +1856,19 @@
           }
         }
       }
+
+      // I. Automatic OAuth App Registration Response
+      else if (msg.msg_type === "app_register" && msg.app_register) {
+        const newAppId = String(msg.app_register.app_id);
+        state.appId = newAppId;
+        localStorage.setItem(STORAGE_KEYS.APP_ID, newAppId);
+        document.getElementById("appIdInput").value = newAppId;
+        gateCurrentAppId.textContent = newAppId;
+        const stEl = document.getElementById("appRegisterStatus");
+        stEl.textContent = `Success! Dedicated OAuth App ID ${newAppId} created and saved for ${window.location.origin}.`;
+        stEl.className = "text-[11px] font-mono text-[#00c853] pt-1";
+        stEl.classList.remove("hidden");
+      }
     };
 
     directDerivWS.onclose = () => {
@@ -1700,11 +1879,69 @@
   }
 
   // ============================================================================
-  // 7. EVENT LISTENERS & SMALL-ACCOUNT PRESETS
+  // 8. EVENT LISTENERS & CONTROLS
   // ============================================================================
+
+  // Login Gate Overlay Controls
+  popupTokenPageBtn.addEventListener("click", () => {
+    window.open(
+      "https://app.deriv.com/account/api-token",
+      "DerivTokenWindow",
+      "width=980,height=720,menubar=no,toolbar=no,location=yes"
+    );
+  });
+
+  gateLoginBtn.addEventListener("click", () => {
+    const token = (gateTokenInput.value || "").trim();
+    if (!token) {
+      gateErrorBox.textContent = "Please paste a valid Deriv API Token.";
+      gateErrorBox.classList.remove("hidden");
+      return;
+    }
+    state.apiToken = token;
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, token);
+    gateErrorBox.classList.add("hidden");
+    if (directDerivWS && directDerivWS.readyState === WebSocket.OPEN) {
+      directDerivWS.send(JSON.stringify({ authorize: token }));
+    } else {
+      connectDerivWebSocket();
+    }
+  });
+
+  gateOAuthBtn.addEventListener("click", triggerDerivOAuthLogin);
+
+  gateGuestPreviewBtn.addEventListener("click", () => {
+    state.guestModeDismissed = true;
+    loginGateOverlay.classList.add("hidden");
+  });
+
+  reopenLoginGateBtn.addEventListener("click", () => {
+    loginGateOverlay.classList.remove("hidden");
+  });
+
+  quickConnectBtn.addEventListener("click", () => {
+    const token = (quickTokenInput.value || "").trim();
+    if (!token) return;
+    state.apiToken = token;
+    localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, token);
+    haltAlertBox.classList.add("hidden");
+    renderAccountSwitcher();
+    connectDerivWebSocket();
+  });
+
+  syncDerivHistoryBtn.addEventListener("click", () => {
+    if (!state.authorized) {
+      loginGateOverlay.classList.remove("hidden");
+      return;
+    }
+    syncDerivAccountData();
+    subscribeLiveDerivProposals();
+  });
 
   symbolSelect.addEventListener("change", () => {
     state.symbol = symbolSelect.value;
+    subscribeOfficialSymbolCandles(state.symbol);
+    subscribeLiveDerivProposals();
     const stats = computeSymbolStatsAndML(state.symbol);
     const ticks = marketBuffers[state.symbol].ticks;
     if (ticks.length) {
@@ -1716,42 +1953,27 @@
     renderMultiMarketScanner();
   });
 
-  quickConnectBtn.addEventListener("click", () => {
-    const token = (quickTokenInput.value || "").trim();
-    if (!token) return;
-    state.apiToken = token;
-    localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, token);
-    paperTradingToggle.checked = false;
-    haltAlertBox.classList.add("hidden");
-    renderAccountSwitcher();
-    connectDerivWebSocket();
+  barrierInput.addEventListener("change", () => {
+    state.barrier = Number(barrierInput.value || 2);
+    subscribeLiveDerivProposals();
+  });
+
+  durationTicksInput.addEventListener("change", () => {
+    subscribeLiveDerivProposals();
   });
 
   accountSwitcherSelect.addEventListener("change", () => {
     const val = accountSwitcherSelect.value;
-    if (val === "PAPER-SIM") {
-      state.apiToken = "";
-      localStorage.removeItem(STORAGE_KEYS.ACTIVE_TOKEN);
-    } else {
+    if (val === "GUEST") {
+      loginGateOverlay.classList.remove("hidden");
+      return;
+    }
+    if (val && val !== state.account.loginid) {
       state.apiToken = val;
       localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, val);
-      paperTradingToggle.checked = false;
+      connectDerivWebSocket();
     }
-    renderAccountSwitcher();
-    connectDerivWebSocket();
   });
-
-  paperTradingToggle.addEventListener("change", () => {
-    updateConnectionHeader(
-      state.connectedToDeriv,
-      state.authorized,
-      state.account,
-      state.symbol
-    );
-  });
-
-  derivOAuthBtn.addEventListener("click", triggerDerivOAuthLogin);
-  document.getElementById("modalOAuthLoginBtn").addEventListener("click", triggerDerivOAuthLogin);
 
   logoutDerivBtn.addEventListener("click", () => {
     localStorage.removeItem(STORAGE_KEYS.ACCOUNTS);
@@ -1759,11 +1981,40 @@
     state.savedAccounts = [];
     state.apiToken = "";
     state.authorized = false;
+    state.trades = [];
+    state.account = {
+      loginid: "GUEST",
+      email: "",
+      currency: "USD",
+      balance: 0.0,
+      is_virtual: false,
+    };
     renderAccountSwitcher();
+    renderTradesTable();
+    loginGateOverlay.classList.remove("hidden");
     connectDerivWebSocket();
   });
 
-  // Small-Account Hit & Run Compounding Presets ($10 / $25 / $50 / $100)
+  document.getElementById("autoRegisterAppIdBtn").addEventListener("click", () => {
+    if (!directDerivWS || directDerivWS.readyState !== WebSocket.OPEN || !state.authorized) {
+      const stEl = document.getElementById("appRegisterStatus");
+      stEl.textContent = "Authorize with an Admin-scoped Deriv API token first.";
+      stEl.className = "text-[11px] font-mono text-[#ffab00] pt-1";
+      stEl.classList.remove("hidden");
+      return;
+    }
+    const redirectUri = window.location.origin + window.location.pathname;
+    directDerivWS.send(
+      JSON.stringify({
+        app_register: "Deriv ProDesk Terminal",
+        scopes: ["read", "trade", "trading_information", "payments"],
+        redirect_uri: redirectUri,
+        verification_uri: redirectUri,
+      })
+    );
+  });
+
+  // Small-Account Presets
   document.querySelectorAll(".account-preset-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const cap = Number(btn.getAttribute("data-preset"));
@@ -1795,10 +2046,15 @@
 
       updateShadowBadge();
       updateRiskAndBotUI(state.risk, state.strategyConfig);
+      subscribeLiveDerivProposals();
     });
   });
 
   toggleBotBtn.addEventListener("click", () => {
+    if (!state.authorized) {
+      loginGateOverlay.classList.remove("hidden");
+      return;
+    }
     const nextEnabled = !state.botEnabled;
     state.barrier = Number(barrierInput.value || 2);
     state.windowSize = Number(document.getElementById("windowSizeInput").value || 100);
@@ -1814,7 +2070,6 @@
       ml_threshold: Number(mlThresholdInput.value || 68),
       virtual_losses_required: Number(virtualLossInput.value || 1),
       window_size: state.windowSize,
-      paper_trading: paperTradingToggle.checked,
     };
     if (nextEnabled) {
       state.risk.halt_reason = null;
@@ -1829,7 +2084,7 @@
       const contractType = btn.getAttribute("data-contract");
       const dur = Number(durationTicksInput.value || 1);
       const bar = Number(barrierInput.value || 2);
-      executeContractOrder(contractType, bar, dur, "Direct Live Order Ticket Fill");
+      executeLiveDerivContract(contractType, bar, dur, "Direct 1-Click Live Order Ticket");
     });
   });
 
@@ -1848,6 +2103,7 @@
     state.risk.halt_reason = null;
     updateShadowBadge();
     updateRiskAndBotUI(state.risk, state.strategyConfig);
+    subscribeLiveDerivProposals();
   });
 
   resetSessionBtn.addEventListener("click", () => {
@@ -1864,14 +2120,11 @@
     state.risk.halt_reason = null;
     state.shadowBot.currentShadowLosses = 0;
     state.shadowBot.pendingVirtualTrade = null;
-    state.trades = [];
-    if (state.account.loginid === "PAPER-SIM") {
-      state.account.balance = 10000;
-    }
     updateShadowBadge();
     updateRiskAndBotUI(state.risk, state.strategyConfig);
-    updateConnectionHeader(state.connectedToDeriv, state.authorized, state.account, state.symbol);
-    renderTradesTable();
+    if (state.authorized) {
+      syncDerivAccountData();
+    }
   });
 
   chartModeTicksBtn.addEventListener("click", () => {
@@ -1912,9 +2165,9 @@
     state.barrier = Number(barrierInput.value || 2);
 
     localStorage.setItem(STORAGE_KEYS.APP_ID, state.appId);
+    gateCurrentAppId.textContent = state.appId;
     if (state.apiToken) {
       localStorage.setItem(STORAGE_KEYS.ACTIVE_TOKEN, state.apiToken);
-      paperTradingToggle.checked = false;
     } else {
       localStorage.removeItem(STORAGE_KEYS.ACTIVE_TOKEN);
     }
